@@ -1,0 +1,514 @@
+# Copyright (c) 2024-2025 Ziqi Fan
+# SPDX-License-Identifier: Apache-2.0
+
+"""Reward functions for VelocityPose task with command-aware penalties."""
+
+from __future__ import annotations
+
+import torch
+from typing import TYPE_CHECKING
+
+from isaaclab.assets import Articulation, RigidObject
+from isaaclab.managers import SceneEntityCfg
+from isaaclab.sensors import RayCaster
+import isaaclab.envs.mdp as mdp
+
+if TYPE_CHECKING:
+    from isaaclab.envs import ManagerBasedRLEnv
+
+
+##
+# Command-aware tracking rewards
+##
+
+
+def track_height_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward tracking height command - resolves height control conflicts
+    
+    Uses exponential kernel reward function to track height commands. Gives high reward
+    when robot base height is close to commanded height.
+    
+    Args:
+        env: Environment instance
+        std: Standard deviation of exponential kernel, controls tolerance (larger is more tolerant)
+        command_name: Command name in command manager (should be "base_velocity_pose")
+        sensor_cfg: Height sensor config for getting terrain height. If None, uses world z coordinate
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Reward values with shape (num_envs,)
+        
+    Design Intent:
+        - Explicitly guide the robot to learn height control
+        - Resolves learning conflicts caused by original lin_vel_z_l2 penalty
+        - Uses exponential kernel to ensure smooth and differentiable rewards
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    
+    # Get target height command (4th dimension of command)
+    command = env.command_manager.get_command(command_name)
+    target_height = command[:, 3]
+    
+    # Calculate current height (considering terrain)
+    if sensor_cfg is not None:
+        sensor: RayCaster = env.scene[sensor_cfg.name]
+        ray_hits = sensor.data.ray_hits_w[..., 2]
+        # Check sensor data validity
+        if not (torch.isnan(ray_hits).any() or torch.isinf(ray_hits).any()):
+            # Current height = base z coordinate - average terrain height
+            current_height = asset.data.root_pos_w[:, 2] - torch.mean(ray_hits, dim=1)
+        else:
+            # Fall back to world coordinates when sensor is invalid
+            current_height = asset.data.root_pos_w[:, 2]
+    else:
+        current_height = asset.data.root_pos_w[:, 2]
+    
+    # Calculate squared height error
+    height_error = torch.square(target_height - current_height)
+    
+    # Use exponential kernel: exp(-error^2 / std^2)
+    # Larger std means higher tolerance
+    reward = torch.exp(-height_error / std**2)
+    
+    # Only give reward when robot is upright (avoid rewarding when fallen)
+    # projected_gravity_b[:, 2] is close to -1 when upright
+    # Use clamp to limit to [0, 0.7] range, normalized to [0, 1]
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return reward
+
+
+def track_orientation_exp(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward tracking orientation command (roll and pitch) - resolves orientation control conflicts
+    
+    Uses exponential kernel reward function to track roll and pitch commands. Gives high reward
+    when robot base orientation is close to commanded orientation.
+    
+    Args:
+        env: Environment instance
+        std: Standard deviation of exponential kernel, controls tolerance
+        command_name: Command name in command manager
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Reward values with shape (num_envs,)
+        
+    Design Intent:
+        - Explicitly guide the robot to learn orientation control
+        - Resolves learning conflicts caused by original ang_vel_xy_l2 penalty
+        - Considers both roll and pitch dimensions
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    
+    # Get target orientation command (5th and 6th dimensions of command)
+    command = env.command_manager.get_command(command_name)
+    target_roll = command[:, 4]
+    target_pitch = command[:, 5]
+    
+    # Calculate current orientation from projected_gravity
+    # projected_gravity_b is gravity projection in body frame [gx, gy, gz]
+    projected_gravity = asset.data.projected_gravity_b
+    
+    # Roll: rotation around x-axis, calculated from gy and gz
+    # roll = atan2(gy, gz)
+    current_roll = torch.atan2(projected_gravity[:, 1], projected_gravity[:, 2])
+    
+    # Pitch: rotation around y-axis, calculated from gx and sqrt(gy^2 + gz^2)
+    # pitch = atan2(-gx, sqrt(gy^2 + gz^2))
+    current_pitch = torch.atan2(
+        -projected_gravity[:, 0],
+        torch.sqrt(projected_gravity[:, 1]**2 + projected_gravity[:, 2]**2)
+    )
+    
+    # Calculate squared errors for roll and pitch
+    roll_error = torch.square(target_roll - current_roll)
+    pitch_error = torch.square(target_pitch - current_pitch)
+    total_error = roll_error + pitch_error
+    
+    # Use exponential kernel
+    reward = torch.exp(-total_error / std**2)
+    
+    # Only give reward when robot is upright
+    reward *= torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
+    
+    return reward
+
+
+##
+# Command-aware conditional penalties
+##
+
+
+def lin_vel_z_penalty_conditional(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    height_threshold: float = 0.02,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Conditional penalty on vertical velocity - only penalize when height command is close to default
+    
+    This function replaces the original lin_vel_z_l2 by checking if the height command has changed
+    to decide whether to penalize vertical velocity.
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        height_threshold: Height command change threshold (meters), below this value means "no height command change"
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Penalty values with shape (num_envs,)
+        
+    Design Intent:
+        - Allow vertical velocity during height adjustments (avoid conflicts)
+        - Still penalize unnecessary vertical motion (e.g., jumping)
+        - Implement intelligent switching through conditional logic
+        
+    Logic:
+        IF |height_cmd - default_height| < threshold:
+            Penalize vertical velocity (no height adjustment needed)
+        ELSE:
+            No penalty (height adjustment in progress)
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    
+    # Get height command
+    command = env.command_manager.get_command(command_name)
+    height_cmd = command[:, 3]
+    
+    # Get default height (from command manager configuration)
+    default_height = env.command_manager.get_term("base_velocity_pose").default_height
+    
+    # Calculate difference between height command and default value
+    height_cmd_diff = torch.abs(height_cmd - default_height)
+    
+    # Only penalize vertical velocity when height command is close to default value
+    should_penalize = height_cmd_diff < height_threshold
+    
+    # Calculate squared vertical velocity (z direction in body frame)
+    penalty = torch.square(asset.data.root_lin_vel_b[:, 2])
+    
+    # Conditionally apply penalty: keep original value when should penalize, otherwise set to zero
+    penalty = torch.where(should_penalize, penalty, torch.zeros_like(penalty))
+    
+    # Only penalize when robot is upright
+    penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return penalty
+
+
+def ang_vel_xy_penalty_conditional(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    angle_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Conditional penalty on roll/pitch angular velocity - only penalize when target orientation is close to zero
+    
+    This function replaces the original ang_vel_xy_l2 by checking if the target orientation (command) 
+    is close to zero to decide whether to penalize angular velocity.
+    
+    Note: roll and pitch are orientation angles (not angular velocities). This function penalizes 
+    the angular velocities (ω_x, ω_y) only when the commanded orientation angles are near zero.
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        angle_threshold: Target orientation threshold (radians), below this value means "target is flat"
+                        e.g., 0.05 rad ≈ 2.86°
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Penalty values with shape (num_envs,)
+        
+    Design Intent:
+        - Allow angular velocity when target orientation requires tilting (avoid conflicts)
+        - Penalize unnecessary angular velocity when target is to remain flat (maintain stability)
+        - Consider both roll and pitch target angles
+        
+    Logic:
+        IF sqrt(target_roll^2 + target_pitch^2) < threshold:
+            Penalize angular velocities ω_x and ω_y (target is flat, shouldn't be rotating)
+        ELSE:
+            No penalty (target requires tilting, rotation is necessary)
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    
+    # Get target roll and pitch angles (orientation commands, not angular velocities)
+    command = env.command_manager.get_command(command_name)
+    target_roll = command[:, 4]   # Target roll angle (rad)
+    target_pitch = command[:, 5]  # Target pitch angle (rad)
+    
+    # Calculate L2 norm of target orientation
+    target_orientation_norm = torch.sqrt(target_roll**2 + target_pitch**2)
+    
+    # Only penalize angular velocity when target orientation is close to zero (i.e., target is flat)
+    should_penalize = target_orientation_norm < angle_threshold
+    
+    # Calculate sum of squared roll and pitch angular velocities (ω_x and ω_y in body frame)
+    penalty = torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
+    
+    # Conditionally apply penalty: penalize only when target is flat
+    penalty = torch.where(should_penalize, penalty, torch.zeros_like(penalty))
+    
+    # Only penalize when robot is upright
+    penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return penalty
+
+
+def stand_still_full_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    velocity_threshold: float = 0.1,
+    height_threshold: float = 0.02,
+    angle_threshold: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Stand still penalty considering full command (including height and orientation)
+    
+    This function replaces the original stand_still by checking all 6D commands to determine
+    if the robot is truly "standing still".
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        velocity_threshold: Velocity command threshold (m/s or rad/s)
+        height_threshold: Height command change threshold (m)
+        angle_threshold: Orientation command threshold (rad)
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Penalty values with shape (num_envs,)
+        
+    Design Intent:
+        - Only penalize joint deviation when truly standing still (all velocity, height, orientation commands are zero)
+        - Allow "standing still but adjusting posture" scenarios
+        - Maintain original safety constraint strength
+        
+    Logic:
+        Truly static = (velocity command small) AND (height close to default) AND (orientation close to zero)
+        IF truly static:
+            Penalize joint deviation from default position
+        ELSE:
+            No penalty (allow adjustments)
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get full 6D command
+    command = env.command_manager.get_command(command_name)
+    velocity_cmd = command[:, :3]  # [vx, vy, ωz]
+    height_cmd = command[:, 3]
+    pose_cmd = command[:, 4:6]  # [roll, pitch]
+    
+    # Get default height
+    default_height = env.command_manager.get_term("base_velocity_pose").default_height
+    
+    # Determine if each dimension is "still"
+    velocity_small = torch.norm(velocity_cmd, dim=1) < velocity_threshold
+    height_default = torch.abs(height_cmd - default_height) < height_threshold
+    pose_zero = torch.norm(pose_cmd, dim=1) < angle_threshold
+    
+    # Only consider "truly static" when all dimensions are still
+    is_truly_static = velocity_small & height_default & pose_zero
+    
+    # Calculate L1 penalty for joint deviation from default position
+    penalty = mdp.joint_deviation_l1(env, asset_cfg)
+    
+    # Only apply penalty when truly static
+    penalty = torch.where(is_truly_static, penalty, torch.zeros_like(penalty))
+    
+    # Only penalize when robot is upright
+    penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return penalty
+
+
+def joint_pos_penalty_full_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    stand_still_scale: float = 5.0,
+    velocity_threshold: float = 0.5,
+    velocity_cmd_threshold: float = 0.1,
+    height_threshold: float = 0.02,
+    angle_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Joint position penalty considering full command
+    
+    This function replaces the original joint_pos_penalty, using full 6D command to determine motion state.
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        asset_cfg: Robot asset configuration (must include joint_ids)
+        stand_still_scale: Penalty scale factor when standing still
+        velocity_threshold: Actual velocity threshold (m/s)
+        velocity_cmd_threshold: Velocity command threshold (m/s or rad/s)
+        height_threshold: Height command change threshold (m)
+        angle_threshold: Orientation command threshold (rad)
+        
+    Returns:
+        Penalty values with shape (num_envs,)
+        
+    Design Intent:
+        - Light penalty on joint deviation during motion (maintain flexibility)
+        - Heavy penalty on joint deviation when standing still (return to default posture)
+        - Consider all 6D commands to determine "motion" state
+        
+    Logic:
+        Motion state = (velocity command large) OR (actual velocity large) OR (height change) OR (orientation change)
+        IF moving:
+            penalty = 1.0 × base_penalty
+        ELSE:
+            penalty = 5.0 × base_penalty
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get full 6D command
+    command = env.command_manager.get_command(command_name)
+    velocity_cmd = command[:, :3]
+    height_cmd = command[:, 3]
+    pose_cmd = command[:, 4:6]
+    
+    # Get default height
+    default_height = env.command_manager.get_term("base_velocity_pose").default_height
+    
+    # Determine if in motion
+    velocity_cmd_norm = torch.norm(velocity_cmd, dim=1)
+    body_vel = torch.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+    height_cmd_diff = torch.abs(height_cmd - default_height)
+    pose_cmd_norm = torch.norm(pose_cmd, dim=1)
+    
+    # Motion condition: velocity command large OR actual velocity large OR height change OR orientation change
+    is_moving = (velocity_cmd_norm > velocity_cmd_threshold) | \
+                (body_vel > velocity_threshold) | \
+                (height_cmd_diff > height_threshold) | \
+                (pose_cmd_norm > angle_threshold)
+    
+    # Calculate base penalty: L2 norm of joint position deviation from default
+    base_penalty = torch.norm(
+        asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids],
+        dim=1
+    )
+    
+    # Adjust penalty strength based on motion state
+    # Moving: 1.0× penalty, Standing still: 5.0× penalty
+    penalty = torch.where(is_moving, base_penalty, stand_still_scale * base_penalty)
+    
+    # Only penalize when robot is upright
+    penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return penalty
+
+
+##
+# Helper functions
+##
+
+
+def is_moving_full_cmd(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    velocity_threshold: float = 0.1,
+    height_threshold: float = 0.02,
+    angle_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Determine if robot is moving (considering full 6D command)
+    
+    This is a helper function used in other reward functions to determine motion state.
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        velocity_threshold: Velocity command threshold
+        height_threshold: Height command change threshold
+        angle_threshold: Orientation command threshold
+        
+    Returns:
+        Boolean tensor with shape (num_envs,), True indicates moving
+        
+    Usage:
+        Can be used in other reward functions to determine whether to apply certain penalties:
+        
+        ```python
+        is_moving = is_moving_full_cmd(env, "base_velocity_pose")
+        penalty = torch.where(is_moving, small_penalty, large_penalty)
+        ```
+    """
+    command = env.command_manager.get_command(command_name)
+    
+    # Calculate velocity command norm
+    velocity_cmd_norm = torch.norm(command[:, :3], dim=1)
+    
+    # Calculate height command difference
+    default_height = env.command_manager.get_term("base_velocity_pose").default_height
+    height_cmd_diff = torch.abs(command[:, 3] - default_height)
+    
+    # Calculate orientation command norm
+    pose_cmd_norm = torch.norm(command[:, 4:6], dim=1)
+    
+    # Consider moving if any dimension has command change
+    return (velocity_cmd_norm > velocity_threshold) | \
+           (height_cmd_diff > height_threshold) | \
+           (pose_cmd_norm > angle_threshold)
+
+
+##
+# Updated existing reward functions to use full command awareness
+##
+
+
+def feet_contact_without_cmd_full(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    velocity_threshold: float = 0.1,
+    height_threshold: float = 0.02,
+    angle_threshold: float = 0.05,
+) -> torch.Tensor:
+    """Penalize feet not in contact with ground when standing still (using full command judgment)
+    
+    This is an improved version of the original feet_contact_without_cmd, considering height and orientation commands.
+    
+    Args:
+        env: Environment instance
+        command_name: Command name in command manager
+        sensor_cfg: Contact sensor configuration
+        velocity_threshold: Velocity command threshold
+        height_threshold: Height command change threshold
+        angle_threshold: Orientation command threshold
+        
+    Returns:
+        Penalty values with shape (num_envs,)
+    """
+    # Use full command to determine if moving
+    is_moving = is_moving_full_cmd(env, command_name, velocity_threshold, height_threshold, angle_threshold)
+    
+    # Get contact sensor data
+    contact_sensor = env.scene[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    is_contact = torch.norm(contact_forces, dim=-1).max(dim=1)[0] > 1.0
+    
+    # Calculate number of feet not in contact
+    num_feet = sensor_cfg.body_ids.__len__()
+    not_contact_count = num_feet - is_contact.sum(dim=-1)
+    
+    # Only penalize when standing still
+    penalty = torch.where(is_moving, torch.zeros_like(not_contact_count, dtype=torch.float), 
+                         not_contact_count.float())
+    
+    penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    
+    return penalty
