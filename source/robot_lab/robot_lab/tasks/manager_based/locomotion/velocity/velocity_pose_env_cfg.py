@@ -22,7 +22,7 @@ from robot_lab.tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
     CurriculumCfg,
 )
 
-import robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp as mdp
+import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 
 
 @configclass

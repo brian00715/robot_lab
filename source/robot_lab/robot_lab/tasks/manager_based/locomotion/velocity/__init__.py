@@ -13,3 +13,9 @@ These environments are based on the `legged_gym` environments provided by Rudin 
 Reference:
     https://github.com/leggedrobotics/legged_gym
 """
+
+# Import velocity environment
+from .config import *  # noqa: F401, F403
+
+# Import velocity-pose environment (6D control)
+from .config_pose import *  # noqa: F401, F403

@@ -7,8 +7,8 @@ from isaaclab.utils import configclass
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 
-from robot_lab.tasks.manager_based.locomotion.velocity_pose.velocity_pose_env_cfg import LocomotionVelocityPoseRoughEnvCfg
-import robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp as mdp
+from robot_lab.tasks.manager_based.locomotion.velocity.velocity_pose_env_cfg import LocomotionVelocityPoseRoughEnvCfg
+import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 
 ##
 # Pre-defined configs
@@ -100,7 +100,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # New: Conditional vertical velocity penalty (only penalize when height command is close to default)
         self.rewards.lin_vel_z_penalty_conditional = RewTerm(
             func=mdp.lin_vel_z_penalty_conditional,
-            weight=-0.5,  # Reduced weight (originally -2.0)
+            weight=-2.0,  # Same weight as Velocity task
             params={
                 "command_name": "base_velocity_pose",
                 "height_threshold": 0.02,  # 2cm tolerance
@@ -110,7 +110,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # New: Conditional angular velocity penalty (only penalize when target orientation is close to zero)
         self.rewards.ang_vel_xy_penalty_conditional = RewTerm(
             func=mdp.ang_vel_xy_penalty_conditional,
-            weight=-0.02,  # Reduced weight (originally -0.05)
+            weight=-0.05,  # Same weight as Velocity task
             params={
                 "command_name": "base_velocity_pose",
                 "angle_threshold": 0.05,  # About 2.86 degrees - when target roll/pitch angles are below this, penalize angular velocity
