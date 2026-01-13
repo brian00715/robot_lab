@@ -101,7 +101,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # New: Conditional vertical velocity penalty (only penalize when height command is close to default)
         self.rewards.lin_vel_z_penalty_conditional = RewTerm(
             func=mdp.lin_vel_z_penalty_conditional,
-            weight=-0.5,  # Reduced weight (originally -2.0)
+            weight=-2.0,
             params={
                 "command_name": "base_velocity_pose",
                 "height_threshold": 0.02,  # 2cm tolerance
@@ -111,7 +111,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # New: Conditional angular velocity penalty (only penalize when target orientation is close to zero)
         self.rewards.ang_vel_xy_penalty_conditional = RewTerm(
             func=mdp.ang_vel_xy_penalty_conditional,
-            weight=-0.02,  # Reduced weight (originally -0.05)
+            weight=-0.05,  
             params={
                 "command_name": "base_velocity_pose",
                 "angle_threshold": 0.05,  # About 2.86 degrees - when target roll/pitch angles are below this, penalize angular velocity
@@ -176,9 +176,9 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.contact_forces.weight = -1.5e-4
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
-        # Velocity-tracking rewards (existing)
-        self.rewards.track_lin_vel_xy_exp.weight = 3.0
-        self.rewards.track_ang_vel_z_exp.weight = 1.5
+        # Velocity-tracking rewards (existing) - Doubled for stronger tracking signal
+        self.rewards.track_lin_vel_xy_exp.weight = 6.0  # Increased from 3.0 (2x)
+        self.rewards.track_ang_vel_z_exp.weight = 3.0   # Increased from 1.5 (2x)
         
         # New: Height tracking reward with exponential growth
         self.rewards.track_height_exp = RewTerm(
