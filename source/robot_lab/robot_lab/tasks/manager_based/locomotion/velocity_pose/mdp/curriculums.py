@@ -79,19 +79,19 @@ def command_curriculum_height_pose(
     
     This curriculum implements a 3-stage progression based on total training iterations:
     
-    Stage 1 (0-20,000 iterations):
+    Stage 1 (0-14,500 iterations):
         - Height range: 0.33m (fixed, ±0cm)
         - Roll range: 0° (fixed)
         - Pitch range: 0° (fixed)
-        - Focus: Learn basic locomotion on rough terrain
+        - Focus: Learn basic locomotion on flat/rough terrain
     
-    Stage 2 (20,000-40,000 iterations):
+    Stage 2 (14,500-25,000 iterations):
         - Height range: [0.30m, 0.36m] (±3cm from default)
         - Roll range: [-8°, +8°] (±0.14 rad)
         - Pitch range: 0° (keep fixed, introduce roll first)
         - Focus: Learn height adjustment and lateral balance
     
-    Stage 3 (40,000-60,000+ iterations):
+    Stage 3 (25,000-40,000+ iterations):
         - Height range: [0.26m, 0.40m] (±7cm, near physical limits)
         - Roll range: [-10°, +10°] (±0.17 rad)
         - Pitch range: [-8°, +8°] (±0.14 rad)
@@ -127,17 +127,18 @@ def command_curriculum_height_pose(
         print(f"{'='*80}\n")
     
     # Determine current stage based on total iterations
-    if total_iterations < 20000:
+    # TEMPORARY: Skipping Stage 1 as we're resuming from 14.5k checkpoint
+    if total_iterations < 0:  # Changed from 14500 to 0, effectively skip Stage 1
         target_stage = 1
         height_range = (default_height, default_height)  # Fixed at 0.33m
         roll_range = (0.0, 0.0)  # Fixed at 0°
         pitch_range = (0.0, 0.0)  # Fixed at 0°
-    elif total_iterations < 40000:
+    elif total_iterations < 10500:  # Stage 2 duration: 10,500 iterations (was 14.5k-25k)
         target_stage = 2
         height_range = (0.30, 0.36)  # ±3cm
         roll_range = (-0.14, 0.14)  # ±8°
         pitch_range = (0.0, 0.0)  # Keep pitch fixed
-    else:  # >= 40000
+    else:  # >= 10500, Stage 3
         target_stage = 3
         height_range = (0.26, 0.40)  # ±7cm (near limits)
         roll_range = (-0.17, 0.17)  # ±10°
@@ -167,13 +168,13 @@ def command_curriculum_height_pose(
     if total_iterations > 0 and total_iterations % 1000 == 0 and total_iterations != env._curriculum_last_update:
         iterations_in_stage = total_iterations - (
             0 if target_stage == 1 else
-            20000 if target_stage == 2 else
-            40000
+            14500 if target_stage == 2 else
+            25000
         )
         stage_total = (
-            20000 if target_stage == 1 else
-            20000 if target_stage == 2 else
-            20000  # Stage 3 is open-ended
+            14500 if target_stage == 1 else
+            10500 if target_stage == 2 else
+            15000  # Stage 3 is open-ended but set 15000 as reference
         )
         progress = min(100.0, (iterations_in_stage / stage_total) * 100)
         

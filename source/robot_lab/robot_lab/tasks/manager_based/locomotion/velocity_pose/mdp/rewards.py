@@ -29,14 +29,15 @@ def track_height_exp(
     sensor_cfg: SceneEntityCfg | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward tracking height command - resolves height control conflicts
+    """Reward tracking height command with exponential growth - more sensitive to small errors
     
-    Uses exponential kernel reward function to track height commands. Gives high reward
-    when robot base height is close to commanded height.
+    Uses exponential growth reward function: reward = exp(-|error|/std)
+    Gives high reward when robot base height is close to commanded height.
     
     Args:
         env: Environment instance
-        std: Standard deviation of exponential kernel, controls tolerance (larger is more tolerant)
+        std: Tolerance parameter in meters (smaller = more sensitive)
+              e.g., std=0.05m means ±5cm tolerance
         command_name: Command name in command manager (should be "base_velocity_pose")
         sensor_cfg: Height sensor config for getting terrain height. If None, uses world z coordinate
         asset_cfg: Robot asset configuration
@@ -45,9 +46,15 @@ def track_height_exp(
         Reward values with shape (num_envs,)
         
     Design Intent:
-        - Explicitly guide the robot to learn height control
+        - Exponential growth: smaller errors get exponentially higher rewards
+        - More sensitive than squared error version
         - Resolves learning conflicts caused by original lin_vel_z_l2 penalty
-        - Uses exponential kernel to ensure smooth and differentiable rewards
+        
+    Reward Characteristics:
+        - Error = 0.00m: reward = 1.00 (perfect)
+        - Error = 0.02m: reward ≈ 0.67 (good)
+        - Error = 0.05m (=std): reward ≈ 0.37 (acceptable)
+        - Error = 0.10m: reward ≈ 0.14 (poor)
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     
@@ -69,17 +76,34 @@ def track_height_exp(
     else:
         current_height = asset.data.root_pos_w[:, 2]
     
-    # Calculate squared height error
-    height_error = torch.square(target_height - current_height)
+    # Calculate absolute height error (more sensitive to small errors)
+    height_error_abs = torch.abs(target_height - current_height)
     
-    # Use exponential kernel: exp(-error^2 / std^2)
-    # Larger std means higher tolerance
-    reward = torch.exp(-height_error / std**2)
+    # Use exponential growth reward: smaller error -> exponentially higher reward
+    # reward = exp(-|error|/std) where std controls sensitivity
+    # When error=0: reward=1.0, When error=std: reward≈0.37
+    reward = torch.exp(-height_error_abs / std)
     
     # Only give reward when robot is upright (avoid rewarding when fallen)
     # projected_gravity_b[:, 2] is close to -1 when upright
     # Use clamp to limit to [0, 0.7] range, normalized to [0, 1]
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    gz = env.scene["robot"].data.projected_gravity_b[:, 2]
+    upright_factor = torch.clamp(-gz, 0, 0.7) / 0.7
+    reward *= upright_factor
+    
+    # Debug: Print statistics every 100 steps to catch the issue early
+    if not hasattr(env, "_height_debug_counter"):
+        env._height_debug_counter = 0
+    env._height_debug_counter += 1
+    if env._height_debug_counter % 100 == 0:
+        print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}):")
+        print(f"  Current height:               mean={current_height.mean().item():.4f}, min={current_height.min().item():.4f}, max={current_height.max().item():.4f}")
+        print(f"  Target height:                mean={target_height.mean().item():.4f}, min={target_height.min().item():.4f}, max={target_height.max().item():.4f}")
+        print(f"  Height error (abs):           mean={height_error_abs.mean().item():.4f}, max={height_error_abs.max().item():.4f}")
+        print(f"  projected_gravity[:, 2] (gz): mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+        print(f"  Upright factor:               mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+        print(f"  Raw reward (before upright):  mean={torch.exp(-height_error_abs / std).mean().item():.6f}")
+        print(f"  Final reward (after upright): mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
 
@@ -90,14 +114,15 @@ def track_orientation_exp(
     command_name: str,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward tracking orientation command (roll and pitch) - resolves orientation control conflicts
+    """Reward tracking orientation command with exponential growth - more sensitive to small errors
     
-    Uses exponential kernel reward function to track roll and pitch commands. Gives high reward
-    when robot base orientation is close to commanded orientation.
+    Uses exponential growth reward function: reward = exp(-(|roll_error| + |pitch_error|)/std)
+    Gives high reward when robot base orientation is close to commanded orientation.
     
     Args:
         env: Environment instance
-        std: Standard deviation of exponential kernel, controls tolerance
+        std: Tolerance parameter in radians (smaller = more sensitive)
+              e.g., std=0.15rad ≈ 8.6° tolerance
         command_name: Command name in command manager
         asset_cfg: Robot asset configuration
         
@@ -105,9 +130,16 @@ def track_orientation_exp(
         Reward values with shape (num_envs,)
         
     Design Intent:
-        - Explicitly guide the robot to learn orientation control
+        - Exponential growth: smaller errors get exponentially higher rewards
+        - More sensitive than squared error version
         - Resolves learning conflicts caused by original ang_vel_xy_l2 penalty
         - Considers both roll and pitch dimensions
+        
+    Reward Characteristics (assuming single-axis error):
+        - Error = 0.00rad (0°): reward = 1.00 (perfect)
+        - Error = 0.05rad (2.9°): reward ≈ 0.72 (good)
+        - Error = 0.15rad (8.6°, =std): reward ≈ 0.37 (acceptable)
+        - Error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     
@@ -118,29 +150,53 @@ def track_orientation_exp(
     
     # Calculate current orientation from projected_gravity
     # projected_gravity_b is gravity projection in body frame [gx, gy, gz]
+    # When robot is upright: gravity = [0, 0, -1], we want roll=0, pitch=0
     projected_gravity = asset.data.projected_gravity_b
     
-    # Roll: rotation around x-axis, calculated from gy and gz
-    # roll = atan2(gy, gz)
-    current_roll = torch.atan2(projected_gravity[:, 1], projected_gravity[:, 2])
+    # FIXED: Correct formula to handle upright robot giving roll=0, pitch=0
+    # Roll: rotation around x-axis, roll = atan2(gy, -gz)
+    current_roll = torch.atan2(projected_gravity[:, 1], -projected_gravity[:, 2])
     
-    # Pitch: rotation around y-axis, calculated from gx and sqrt(gy^2 + gz^2)
-    # pitch = atan2(-gx, sqrt(gy^2 + gz^2))
-    current_pitch = torch.atan2(
-        -projected_gravity[:, 0],
-        torch.sqrt(projected_gravity[:, 1]**2 + projected_gravity[:, 2]**2)
-    )
+    # Pitch: rotation around y-axis, pitch = atan2(-gx, -gz)
+    current_pitch = torch.atan2(-projected_gravity[:, 0], -projected_gravity[:, 2])
     
-    # Calculate squared errors for roll and pitch
-    roll_error = torch.square(target_roll - current_roll)
-    pitch_error = torch.square(target_pitch - current_pitch)
-    total_error = roll_error + pitch_error
+    # Calculate absolute errors for roll and pitch
+    # Use modulo arithmetic to handle angle wrapping [-π, π]
+    roll_error = target_roll - current_roll
+    pitch_error = target_pitch - current_pitch
     
-    # Use exponential kernel
-    reward = torch.exp(-total_error / std**2)
+    # Normalize angles to [-π, π] range to avoid wrap-around issues
+    roll_error = torch.atan2(torch.sin(roll_error), torch.cos(roll_error))
+    pitch_error = torch.atan2(torch.sin(pitch_error), torch.cos(pitch_error))
+    
+    # Calculate absolute errors
+    roll_error_abs = torch.abs(roll_error)
+    pitch_error_abs = torch.abs(pitch_error)
+    total_error_abs = roll_error_abs + pitch_error_abs
+    
+    # Use exponential growth reward: smaller error -> exponentially higher reward
+    # reward = exp(-|error|/std) where std controls sensitivity
+    # When error=0: reward=1.0, When error=std: reward≈0.37
+    reward = torch.exp(-total_error_abs / std)
     
     # Only give reward when robot is upright
-    reward *= torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
+    upright_factor = torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
+    reward *= upright_factor
+    
+    # Debug: Print statistics every 100 steps to catch the issue early
+    if not hasattr(env, "_orient_debug_counter"):
+        env._orient_debug_counter = 0
+    env._orient_debug_counter += 1
+    if env._orient_debug_counter % 100 == 0:
+        gz = projected_gravity[:, 2]
+        print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}):")
+        print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+        print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+        print(f"  Roll error (deg):              mean={torch.rad2deg(roll_error_abs).mean().item():.2f}, max={torch.rad2deg(roll_error_abs).max().item():.2f}")
+        print(f"  Pitch error (deg):             mean={torch.rad2deg(pitch_error_abs).mean().item():.2f}, max={torch.rad2deg(pitch_error_abs).max().item():.2f}")
+        print(f"  Total error (deg):             mean={torch.rad2deg(total_error_abs).mean().item():.2f}, max={torch.rad2deg(total_error_abs).max().item():.2f}")
+        print(f"  Raw reward (before upright):   mean={torch.exp(-total_error_abs / std).mean().item():.6f}")
+        print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
 

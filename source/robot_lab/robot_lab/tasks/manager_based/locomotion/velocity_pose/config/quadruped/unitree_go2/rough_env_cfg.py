@@ -41,10 +41,11 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # ------------------------------Commands------------------------------
         # Set default height for Go2 (approximately 0.33m)
         self.commands.base_velocity_pose.default_height = 0.33
-        # For curriculum learning, keep height and pose ranges at zero (will use defaults)
-        self.commands.base_velocity_pose.ranges.height = (0.0, 0.0)
-        self.commands.base_velocity_pose.ranges.roll = (0.0, 0.0)
-        self.commands.base_velocity_pose.ranges.pitch = (0.0, 0.0)
+        # Stage 2 ranges for inference/play mode: test height adjustment and roll balance
+        # These ranges match Stage 2 training curriculum (14.5k-25k iterations)
+        self.commands.base_velocity_pose.ranges.height = (0.30, 0.36)  # ±3cm from default
+        self.commands.base_velocity_pose.ranges.roll = (-0.14, 0.14)   # ±8° (±0.14 rad)
+        self.commands.base_velocity_pose.ranges.pitch = (0.0, 0.0)     # Keep fixed (Stage 2 setting)
 
         # ------------------------------Observations------------------------------
         self.observations.policy.base_lin_vel.scale = 2.0
@@ -179,24 +180,28 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.track_lin_vel_xy_exp.weight = 3.0
         self.rewards.track_ang_vel_z_exp.weight = 1.5
         
-        # New: Height tracking reward
+        # New: Height tracking reward with exponential growth
         self.rewards.track_height_exp = RewTerm(
             func=mdp.track_height_exp,
-            weight=2.0,  # High priority, guides height control
+            weight=5.0,  # Increased for higher priority
             params={
                 "command_name": "base_velocity_pose",
-                "std": math.sqrt(0.25),  # 0.5m standard deviation, tolerance
+                "std": 0.06,  # IMPROVED: More sensitive! 0.06m ≈ 6cm for precise height control
+                # Reward loss: 2cm→29%, 4cm→49%, 6cm→63%, 10cm→81%
+                # This encourages precise height tracking and reduces base oscillation
                 "sensor_cfg": SceneEntityCfg("height_scanner_base"),
             }
         )
         
-        # New: Orientation tracking reward (roll and pitch)
+        # New: Orientation tracking reward (roll and pitch) with exponential growth
         self.rewards.track_orientation_exp = RewTerm(
             func=mdp.track_orientation_exp,
-            weight=1.0,  # Guides orientation control
+            weight=4.0,  # Increased for higher priority
             params={
                 "command_name": "base_velocity_pose",
-                "std": math.sqrt(0.5),  # About 0.7rad standard deviation
+                "std": 0.15,  # IMPROVED: Much more sensitive! 0.15rad ≈ 8.6° for precise pose control
+                # Reward loss: 2°→17%, 4°→31%, 8°→54%, 15°→80%
+                # This dramatically increases sensitivity in 0-15° range, reducing vibrations
             }
         )
 

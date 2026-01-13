@@ -132,9 +132,10 @@ def base_orientation_error(
     
     # Calculate current roll and pitch from projected gravity
     # projected_gravity is in base frame: [gx, gy, gz]
-    # roll = atan2(gy, gz), pitch = atan2(-gx, gz)
-    current_roll = torch.atan2(projected_gravity[:, 1], projected_gravity[:, 2])
-    current_pitch = torch.atan2(-projected_gravity[:, 0], projected_gravity[:, 2])
+    # When robot is upright: gravity = [0, 0, -1], we want roll=0, pitch=0
+    # FIXED: Correct formula - roll = atan2(gy, -gz), pitch = atan2(-gx, -gz)
+    current_roll = torch.atan2(projected_gravity[:, 1], -projected_gravity[:, 2])
+    current_pitch = torch.atan2(-projected_gravity[:, 0], -projected_gravity[:, 2])
     current_orientation = torch.stack([current_roll, current_pitch], dim=1)
     
     # Get commanded orientation
