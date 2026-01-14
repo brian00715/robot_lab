@@ -4,9 +4,10 @@
 """Curriculum learning functions for VelocityPose task with stage-based progression.
 
 This module implements a fixed-iteration stage-based curriculum:
-- Stage 1 (0-20k iterations): Height and pose commands fixed at default (ranges = 0)
-- Stage 2 (20k-40k iterations): Small range for height and pose commands
-- Stage 3 (40k-60k+ iterations): Large range for height and pose commands
+- Stage 1 (< 0 iterations): Skipped - Height and pose commands fixed at default
+- Stage 2 (< 0 iterations): Skipped - Small range for height and pose commands
+- Stage 3 (0-15,000 iterations): Medium range for height and pose commands (±10cm height, ±20° roll, ±12° pitch)
+- Stage 4 (15,000-25,000+ iterations): Large range for height and pose commands (±15cm height, ±30° roll, ±15° pitch)
 
 The curriculum automatically tracks total iterations across training sessions,
 so --resume will correctly continue from the accumulated iteration count.
@@ -77,25 +78,33 @@ def command_curriculum_height_pose(
 ) -> torch.Tensor:
     """Stage-based curriculum for height and pose commands with fixed iteration thresholds.
     
-    This curriculum implements a 3-stage progression based on total training iterations:
+    This curriculum implements a 2-stage progression based on total training iterations:
     
-    Stage 1 (0-14,500 iterations):
+    Stage 1 (< 0 iterations):
+        - SKIPPED
         - Height range: 0.33m (fixed, ±0cm)
         - Roll range: 0° (fixed)
         - Pitch range: 0° (fixed)
-        - Focus: Learn basic locomotion on flat/rough terrain
     
-    Stage 2 (14,500-25,000 iterations):
+    Stage 2 (< 0 iterations):
+        - SKIPPED
         - Height range: [0.30m, 0.36m] (±3cm from default)
         - Roll range: [-8°, +8°] (±0.14 rad)
-        - Pitch range: 0° (keep fixed, introduce roll first)
-        - Focus: Learn height adjustment and lateral balance
+        - Pitch range: 0° (keep fixed)
     
-    Stage 3 (25,000-40,000+ iterations):
-        - Height range: [0.26m, 0.40m] (±7cm, near physical limits)
-        - Roll range: [-10°, +10°] (±0.17 rad)
-        - Pitch range: [-8°, +8°] (±0.14 rad)
-        - Focus: Master full pose control within safe limits
+    Stage 3 (0-15,000 iterations):
+        - Height range: [0.23m, 0.43m] (±10cm)
+        - Roll range: [-20°, +20°] (±0.349 rad)
+        - Pitch range: [-12°, +12°] (±0.21 rad)
+        - Focus: Learn medium-range pose control
+        - Duration: 15,000 iterations
+    
+    Stage 4 (15,000-25,000+ iterations):
+        - Height range: [0.18m, 0.48m] (±15cm, maximum range)
+        - Roll range: [-30°, +30°] (±0.524 rad, π/6)
+        - Pitch range: [-15°, +15°] (±0.262 rad)
+        - Focus: Master full pose control at maximum safe limits
+        - Duration: 10,000 iterations
     
     The curriculum automatically handles --resume by tracking env.common_step_counter,
     which persists across training sessions.
@@ -106,7 +115,7 @@ def command_curriculum_height_pose(
         command_name: Name of the command term (default: "base_velocity_pose")
     
     Returns:
-        Current stage number as a tensor for logging (1, 2, or 3)
+        Current stage number as a tensor for logging (1, 2, 3, or 4)
     """
     # Get command manager ranges
     command_term = env.command_manager.get_term(command_name)
@@ -127,22 +136,27 @@ def command_curriculum_height_pose(
         print(f"{'='*80}\n")
     
     # Determine current stage based on total iterations
-    # TEMPORARY: Skipping Stage 1 as we're resuming from 14.5k checkpoint
-    if total_iterations < 0:  # Changed from 14500 to 0, effectively skip Stage 1
+    # Starting directly from Stage 3 (for resuming from model_14500.pt)
+    if total_iterations < 0:  # Stage 1: Skipped
         target_stage = 1
         height_range = (default_height, default_height)  # Fixed at 0.33m
         roll_range = (0.0, 0.0)  # Fixed at 0°
         pitch_range = (0.0, 0.0)  # Fixed at 0°
-    elif total_iterations < 10500:  # Stage 2 duration: 10,500 iterations (was 14.5k-25k)
+    elif total_iterations < 0:  # Stage 2: Skipped (changed from 10500 to 0)
         target_stage = 2
         height_range = (0.30, 0.36)  # ±3cm
         roll_range = (-0.14, 0.14)  # ±8°
         pitch_range = (0.0, 0.0)  # Keep pitch fixed
-    else:  # >= 10500, Stage 3
+    elif total_iterations < 15000:  # Stage 3 duration: 15,000 iterations (0-15k)
         target_stage = 3
-        height_range = (0.26, 0.40)  # ±7cm (near limits)
-        roll_range = (-0.17, 0.17)  # ±10°
-        pitch_range = (-0.14, 0.14)  # ±8°
+        height_range = (0.23, 0.43)  # ±10cm (near limits)
+        roll_range = (-0.349, 0.349)  # ±20°
+        pitch_range = (-0.21, 0.21)  # ±12°
+    else:  # >= 15000, Stage 4
+        target_stage = 4
+        height_range = (0.18, 0.48)  # ±15cm (maximum range)
+        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad)
+        pitch_range = (-0.262, 0.262)  # ±15°
     
     # Update ranges if stage changed
     if target_stage != env._curriculum_stage:
@@ -168,15 +182,17 @@ def command_curriculum_height_pose(
     if total_iterations > 0 and total_iterations % 1000 == 0 and total_iterations != env._curriculum_last_update:
         iterations_in_stage = total_iterations - (
             0 if target_stage == 1 else
-            14500 if target_stage == 2 else
-            25000
+            0 if target_stage == 2 else
+            0 if target_stage == 3 else  # Stage 3 starts from 0
+            15000  # Stage 4 starts from 15000
         )
         stage_total = (
-            14500 if target_stage == 1 else
-            10500 if target_stage == 2 else
-            15000  # Stage 3 is open-ended but set 15000 as reference
+            0 if target_stage == 1 else  # Stage 1 skipped
+            0 if target_stage == 2 else  # Stage 2 skipped
+            15000 if target_stage == 3 else  # Stage 3: 0-15000
+            10000  # Stage 4: 15000-25000
         )
-        progress = min(100.0, (iterations_in_stage / stage_total) * 100)
+        progress = min(100.0, (iterations_in_stage / stage_total) * 100) if stage_total > 0 else 0.0
         
         print(f"[Curriculum] Stage {target_stage}: Iteration {total_iterations} "
               f"(Stage progress: {iterations_in_stage}/{stage_total} = {progress:.1f}%)")

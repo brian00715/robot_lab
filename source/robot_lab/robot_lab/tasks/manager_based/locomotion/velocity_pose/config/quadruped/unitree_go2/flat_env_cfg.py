@@ -20,6 +20,20 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         # post init of parent
         super().__post_init__()
 
+        # ------------------------------Command Ranges for Inference------------------------------
+        # Adjust height range: 0.20-0.46m (Go2 default is 0.35m)
+        # Adjust roll range: ±30 degrees (±0.524 radians)
+        import math
+        self.commands.base_velocity_pose.ranges.height = (0.20, 0.46)
+        self.commands.base_velocity_pose.ranges.roll = (-math.pi/6, math.pi/6)  # ±30°
+        # Keep default height at 0.35m (middle of range)
+        self.commands.base_velocity_pose.default_height = 0.35
+        
+        # Disable curriculum for flat terrain (for inference with full range)
+        # Curriculum is useful for training but not needed for inference/testing
+        self.curriculum.command_curriculum_height_pose = None
+        print("[Config] Disabled command_curriculum_height_pose for flat terrain inference")
+
         # ------------------------------Terrain and Sensors------------------------------
         # Change terrain to flat
         self.scene.terrain.terrain_type = "plane"
