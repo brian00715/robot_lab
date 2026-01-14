@@ -211,6 +211,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    # Initialize visualizer for VelocityPose commands if applicable
+    visualizer = None
+    if "VelocityPose" in args_cli.task:
+        try:
+            from robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp.visualizers import (
+                VelocityPoseCommandVisualizer,
+            )
+            visualizer = VelocityPoseCommandVisualizer(env.unwrapped, env.unwrapped.num_envs)
+            print("[INFO] VelocityPose command visualizer enabled")
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize VelocityPose visualizer: {e}")
+
     # reset environment
     obs = env.get_observations()
     timestep = 0
@@ -226,6 +238,26 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             obs, _, dones, _ = env.step(actions)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
+            
+            # Update command visualization if enabled
+            if visualizer is not None:
+                try:
+                    # Get current commands from the environment
+                    command_manager = env.unwrapped.command_manager
+                    if hasattr(command_manager, "get_command"):
+                        commands = command_manager.get_command("base_velocity_pose")
+                    else:
+                        # Fallback: get from the term directly
+                        commands = command_manager._terms["base_velocity_pose"].command
+                    
+                    # Get robot articulation
+                    robot = env.unwrapped.scene["robot"]
+                    
+                    # Update visualization
+                    visualizer.update(commands, robot)
+                except Exception as e:
+                    print(f"[WARNING] Visualizer update failed: {e}")
+                    
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video
