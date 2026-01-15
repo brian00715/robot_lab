@@ -92,16 +92,17 @@ def track_height_exp(
     reward *= upright_factor
     
     # Disable reward during Stage 1 (base training phase, 0-20,000 iterations)
-    # In Stage 1, focus on basic locomotion without height control
-    if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
-        reward = torch.zeros_like(reward)
+    # MODIFIED: Stage 1 is now skipped, so this check is no longer needed
+    # Rewards are always enabled starting from Stage 2
+    # if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
+    #     reward = torch.zeros_like(reward)
     
     # Debug: Print statistics every 100 steps to catch the issue early
     if not hasattr(env, "_height_debug_counter"):
         env._height_debug_counter = 0
     env._height_debug_counter += 1
     if env._height_debug_counter % 100 == 0:
-        stage_info = f" [Stage {env._curriculum_stage} - DISABLED]" if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1 else ""
+        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
         print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}){stage_info}:")
         print(f"  Current height:               mean={current_height.mean().item():.4f}, min={current_height.min().item():.4f}, max={current_height.max().item():.4f}")
         print(f"  Target height:                mean={target_height.mean().item():.4f}, min={target_height.min().item():.4f}, max={target_height.max().item():.4f}")
@@ -230,9 +231,10 @@ def track_orientation_exp(
     reward *= upright_factor
     
     # Disable reward during Stage 1 (base training phase, 0-20,000 iterations)
-    # In Stage 1, focus on basic locomotion without orientation control
-    if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
-        reward = torch.zeros_like(reward)
+    # MODIFIED: Stage 1 is now skipped, so this check is no longer needed
+    # Rewards are always enabled starting from Stage 2
+    # if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
+    #     reward = torch.zeros_like(reward)
     
     # Debug: Print statistics every 100 steps
     if not hasattr(env, "_orient_debug_counter"):
@@ -244,7 +246,7 @@ def track_orientation_exp(
         yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
         current_quat_w_norm = torch.norm(current_quat_w, dim=1)
         
-        stage_info = f" [Stage {env._curriculum_stage} - DISABLED]" if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1 else ""
+        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
         print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}){stage_info}:")
         print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
         print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")

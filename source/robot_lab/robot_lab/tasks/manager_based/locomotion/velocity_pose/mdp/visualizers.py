@@ -184,29 +184,52 @@ class VelocityPoseCommandVisualizer:
         current_height = base_pos_w[:, 2]  # 当前实际高度
         
         # ============================================================
-        # 步骤2: 计算目标姿态的可视化
+        # 步骤2: 计算目标姿态的可视化（在世界坐标系中）
         # ============================================================
         # 目标原点位置：质心XY + 目标高度Z
         target_origin_pos = base_pos_w.clone()
         target_origin_pos[:, 2] = target_height
         
-        # 计算目标姿态四元数
-        target_quat = quat_from_euler_xyz(target_roll, target_pitch, torch.zeros_like(target_roll))
+        # CRITICAL: 目标四元数的正确计算
+        # 
+        # 命令中的 roll/pitch 定义在 Point Frame B (Yaw-Aligned Frame) 中
+        # 即：Base Frame C 相对于 Point Frame B 的姿态
+        #
+        # 为了在世界坐标系中可视化，需要：
+        # target_quat_world = yaw_quat × target_quat_relative
+        #
+        # 其中：
+        # - yaw_quat: Point Frame B 相对于 World Frame A 的旋转（只有 yaw）
+        # - target_quat_relative: 命令中的相对姿态（roll, pitch, yaw=0）
+        
+        from isaaclab.utils.math import yaw_quat, quat_mul, quat_conjugate
+        
+        # 1. 获取当前机器人的 yaw 四元数（Point Frame B 在世界坐标系中的朝向）
+        current_yaw_quat = yaw_quat(base_quat_w)  # (N, 4) - 只保留 yaw，roll=0, pitch=0
+        
+        # 2. 计算命令中的相对姿态（Base Frame C 相对于 Point Frame B）
+        # 注意：这里的 yaw=0，因为 yaw 已经包含在 current_yaw_quat 中了
+        target_quat_relative = quat_from_euler_xyz(target_roll, target_pitch, torch.zeros_like(target_roll))
+        
+        # 3. 组合得到世界坐标系中的目标姿态
+        # target_quat_world = yaw_quat × target_quat_relative
+        target_quat_world = quat_mul(current_yaw_quat, target_quat_relative)
         
         # 计算目标坐标轴（圆柱一端在原点）
-        target_axes = self._compute_axis_markers(target_origin_pos, target_quat, axis_length=0.3)
+        target_axes = self._compute_axis_markers(target_origin_pos, target_quat_world, axis_length=0.3)
         
         # ============================================================
-        # 步骤3: 计算当前姿态的可视化
+        # 步骤3: 计算当前姿态的可视化（在世界坐标系中）
         # ============================================================
         # 当前原点位置：质心实际位置
         current_origin_pos = base_pos_w.clone()
         
-        # 计算当前姿态四元数
-        current_quat = quat_from_euler_xyz(current_roll, current_pitch, torch.zeros_like(current_roll))
+        # CRITICAL: 直接使用机器人在世界坐标系中的实际四元数
+        # 不要从 roll/pitch 重新计算！因为那会丢失 yaw 信息
+        current_quat_world = base_quat_w.clone()  # (N, 4) - 机器人的实际世界姿态
         
         # 计算当前坐标轴（圆柱一端在原点）
-        current_axes = self._compute_axis_markers(current_origin_pos, current_quat, axis_length=0.3)
+        current_axes = self._compute_axis_markers(current_origin_pos, current_quat_world, axis_length=0.3)
         
         # ============================================================
         # 步骤4: 更新所有markers

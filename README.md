@@ -458,3 +458,14 @@ The project uses some code from the following open-source code repositories:
 
 - [linden713/humanoid_amp](https://github.com/linden713/humanoid_amp)
 - [HybridRobotics/whole_body_tracking](https://github.com/HybridRobotics/whole_body_tracking)
+
+
+Train
+cd /home/yzy/robot_lab && python scripts/reinforcement_learning/rsl_rl/train.py \
+    --task=RobotLab-Isaac-VelocityPose-Flat-Unitree-Go2-v0 \
+    --num_envs=4096 \
+    --max_iterations=50000 \
+    --resume \
+    --load_run=logs/rsl_rl/unitree_go2_velocity_pose_flat/2026-01-15_08-52-07 \
+    --checkpoint=model_25800.pt \
+    --headless

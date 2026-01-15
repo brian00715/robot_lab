@@ -181,27 +181,31 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.track_ang_vel_z_exp.weight = 3.0   # Increased from 1.5 (2x)
         
         # New: Height tracking reward with exponential growth
+        # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
+        # Initial values are placeholders - curriculum will override based on stage:
+        #   Stage 3 (0-15k): weight=3.0, std=sqrt(0.05)≈0.22m
+        #   Stage 4 (15k+):  weight=4.0, std=sqrt(0.05)≈0.22m
         self.rewards.track_height_exp = RewTerm(
             func=mdp.track_height_exp,
-            weight=5.0,  # Increased for higher priority
+            weight=2.0,  # Placeholder - will be updated by curriculum
             params={
                 "command_name": "base_velocity_pose",
-                "std": 0.06,  # IMPROVED: More sensitive! 0.06m ≈ 6cm for precise height control
-                # Reward loss: 2cm→29%, 4cm→49%, 6cm→63%, 10cm→81%
-                # This encourages precise height tracking and reduces base oscillation
+                "std": math.sqrt(0.25),  # Placeholder - will be updated by curriculum
                 "sensor_cfg": SceneEntityCfg("height_scanner_base"),
             }
         )
         
-        # New: Orientation tracking reward (roll and pitch) with exponential growth
+        # New: Orientation tracking reward (roll, pitch, yaw) with exponential growth
+        # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
+        # Initial values are placeholders - curriculum will override based on stage:
+        #   Stage 3 (0-15k): weight=1.5, std=sqrt(0.10)≈0.316rad (18°)
+        #   Stage 4 (15k+):  weight=2.0, std=sqrt(0.10)≈0.316rad (18°)
         self.rewards.track_orientation_exp = RewTerm(
             func=mdp.track_orientation_exp,
-            weight=4.0,  # Increased for higher priority
+            weight=1.0,  # Placeholder - will be updated by curriculum
             params={
                 "command_name": "base_velocity_pose",
-                "std": 0.15,  # IMPROVED: Much more sensitive! 0.15rad ≈ 8.6° for precise pose control
-                # Reward loss: 2°→17%, 4°→31%, 8°→54%, 15°→80%
-                # This dramatically increases sensitivity in 0-15° range, reducing vibrations
+                "std": math.sqrt(0.5),  # Placeholder - will be updated by curriculum
             }
         )
 
