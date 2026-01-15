@@ -51,12 +51,30 @@ def track_ang_vel_z_exp(
 def track_lin_vel_xy_yaw_frame_exp(
     env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    """Reward tracking of linear velocity commands (xy axes) in the gravity aligned robot frame using exponential kernel."""
+    """Reward tracking of linear velocity commands (xy axes) in the Point Frame B (Yaw-Aligned Frame).
+    
+    Point Frame B (质点坐标系B) is gravity-aligned with Z-axis vertical (same as World Frame A),
+    but XY plane rotates with robot's yaw angle only (ignoring roll/pitch).
+    
+    Linear velocity commands (vx, vy) are defined in Point Frame B:
+    - vx: forward velocity in motion direction (Point Frame B X-axis)
+    - vy: lateral velocity to the left (Point Frame B Y-axis)
+    
+    This ensures velocity tracking is NOT affected by robot's roll/pitch orientation.
+    """
     # extract the used quantities (to enable type-hinting)
     asset = env.scene[asset_cfg.name]
-    vel_yaw = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
+    
+    # Transform world-frame linear velocity to Point Frame B (Yaw-Aligned Frame)
+    # yaw_quat extracts only yaw rotation from full quaternion (sets roll=0, pitch=0)
+    # This gives us velocity components in Point Frame B (质点坐标系B)
+    root_lin_vel_yaw_frame = quat_apply_inverse(yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3])
+    
+    # Compare commanded velocity (in Point Frame B) with actual velocity (in Point Frame B)
+    # command[:, :2] = [vx_command, vy_command] in Point Frame B
+    # root_lin_vel_yaw_frame[:, :2] = [vx_actual, vy_actual] in Point Frame B
     lin_vel_error = torch.sum(
-        torch.square(env.command_manager.get_command(command_name)[:, :2] - vel_yaw[:, :2]), dim=1
+        torch.square(env.command_manager.get_command(command_name)[:, :2] - root_lin_vel_yaw_frame[:, :2]), dim=1
     )
     reward = torch.exp(-lin_vel_error / std**2)
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
@@ -64,9 +82,24 @@ def track_lin_vel_xy_yaw_frame_exp(
 
 
 def track_ang_vel_z_world_exp(
-    env, command_name: str, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+    env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    """Reward tracking of angular velocity commands (yaw) in world frame using exponential kernel."""
+    """Reward tracking of angular velocity commands (yaw) in world frame using exponential kernel.
+    
+    This function tracks the angular velocity around the world Z-axis (vertical axis), which is
+    equivalent to tracking the Point Frame B (Yaw-Aligned Frame) Z-axis angular velocity.
+    This ensures strict and accurate tracking of the robot's motion direction change,
+    even when the robot is tilted (roll/pitch != 0).
+    
+    Args:
+        env: The RL environment instance
+        std: Standard deviation for exponential kernel (smaller = more sensitive)
+        command_name: Name of the command term
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Reward values with shape (num_envs,)
+    """
     # extract the used quantities (to enable type-hinting)
     asset = env.scene[asset_cfg.name]
     ang_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_w[:, 2])

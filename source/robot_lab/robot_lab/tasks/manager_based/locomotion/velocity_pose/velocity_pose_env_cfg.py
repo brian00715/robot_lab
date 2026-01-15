@@ -77,8 +77,18 @@ class LocomotionVelocityPoseRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # Update reward terms that reference commands
         if hasattr(self.rewards, "track_lin_vel_xy_exp") and self.rewards.track_lin_vel_xy_exp is not None:
             self.rewards.track_lin_vel_xy_exp.params["command_name"] = "base_velocity_pose"
+            # Override to use Yaw-Aligned Frame (Point Frame B) for STRICT tracking
+            # Linear velocity commands (vx, vy) are defined in Point Frame B (motion direction frame)
+            # NOT in Body Frame C which includes roll/pitch effects
+            from robot_lab.tasks.manager_based.locomotion.velocity.mdp import rewards as velocity_rewards
+            self.rewards.track_lin_vel_xy_exp.func = velocity_rewards.track_lin_vel_xy_yaw_frame_exp
         if hasattr(self.rewards, "track_ang_vel_z_exp") and self.rewards.track_ang_vel_z_exp is not None:
             self.rewards.track_ang_vel_z_exp.params["command_name"] = "base_velocity_pose"
+            # Override to use World Frame Z-axis for STRICT Point Frame B tracking
+            # This ensures angular velocity tracks the motion direction change (yaw in world)
+            # rather than body rotation, especially important when robot is tilted
+            from robot_lab.tasks.manager_based.locomotion.velocity.mdp import rewards as velocity_rewards
+            self.rewards.track_ang_vel_z_exp.func = velocity_rewards.track_ang_vel_z_world_exp
         if hasattr(self.rewards, "stand_still") and self.rewards.stand_still is not None:
             self.rewards.stand_still.params["command_name"] = "base_velocity_pose"
         if hasattr(self.rewards, "joint_pos_penalty") and self.rewards.joint_pos_penalty is not None:

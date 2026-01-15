@@ -41,14 +41,15 @@ def base_height_command(env: ManagerBasedRLEnv) -> torch.Tensor:
 
 
 def base_orientation_command(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Orientation command (roll, pitch) from the command manager.
+    """Orientation command (roll, pitch, yaw) from the command manager.
     
     Returns:
-        Orientation command tensor (num_envs, 2) in radians [roll, pitch].
+        Orientation command tensor (num_envs, 3) in radians [roll, pitch, yaw].
+        These angles define the desired Base Frame C orientation relative to Point Frame B.
     """
     command = env.command_manager.get_command("base_velocity_pose")
-    # Command format: [lin_vel_x, lin_vel_y, ang_vel_z, height, roll, pitch]
-    return command[:, 4:6]  # Extract roll and pitch
+    # Command format: [lin_vel_x, lin_vel_y, ang_vel_z, height, roll, pitch, yaw]
+    return command[:, 4:7]  # Extract roll, pitch, yaw
 
 
 def base_height_error(

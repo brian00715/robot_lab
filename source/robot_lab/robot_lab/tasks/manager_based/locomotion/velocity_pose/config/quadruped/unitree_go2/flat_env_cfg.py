@@ -29,10 +29,11 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         # Keep default height at 0.35m (middle of range)
         self.commands.base_velocity_pose.default_height = 0.35
         
-        # Disable curriculum for flat terrain (for inference with full range)
-        # Curriculum is useful for training but not needed for inference/testing
-        self.curriculum.command_curriculum_height_pose = None
-        print("[Config] Disabled command_curriculum_height_pose for flat terrain inference")
+        # RE-ENABLE curriculum for training (needed for Stage 1 reward disabling)
+        # Curriculum will control command ranges and enable/disable pose rewards during training
+        # Note: For inference/testing, you can disable curriculum after training is complete
+        # self.curriculum.command_curriculum_height_pose = None  # <-- Commented out for training
+        print("[Config] Curriculum enabled for flat terrain training (Stage 1-4)")
 
         # ------------------------------Terrain and Sensors------------------------------
         # Change terrain to flat

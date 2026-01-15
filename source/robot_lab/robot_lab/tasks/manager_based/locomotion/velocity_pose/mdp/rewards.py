@@ -91,12 +91,18 @@ def track_height_exp(
     upright_factor = torch.clamp(-gz, 0, 0.7) / 0.7
     reward *= upright_factor
     
+    # Disable reward during Stage 1 (base training phase, 0-20,000 iterations)
+    # In Stage 1, focus on basic locomotion without height control
+    if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
+        reward = torch.zeros_like(reward)
+    
     # Debug: Print statistics every 100 steps to catch the issue early
     if not hasattr(env, "_height_debug_counter"):
         env._height_debug_counter = 0
     env._height_debug_counter += 1
     if env._height_debug_counter % 100 == 0:
-        print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}):")
+        stage_info = f" [Stage {env._curriculum_stage} - DISABLED]" if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1 else ""
+        print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}){stage_info}:")
         print(f"  Current height:               mean={current_height.mean().item():.4f}, min={current_height.min().item():.4f}, max={current_height.max().item():.4f}")
         print(f"  Target height:                mean={target_height.mean().item():.4f}, min={target_height.min().item():.4f}, max={target_height.max().item():.4f}")
         print(f"  Height error (abs):           mean={height_error_abs.mean().item():.4f}, max={height_error_abs.max().item():.4f}")
@@ -114,88 +120,147 @@ def track_orientation_exp(
     command_name: str,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Reward tracking orientation command with exponential growth - more sensitive to small errors
+    """Reward tracking orientation command using quaternion-based error calculation in yaw-aligned frame.
     
-    Uses exponential growth reward function: reward = exp(-(|roll_error| + |pitch_error|)/std)
-    Gives high reward when robot base orientation is close to commanded orientation.
+    Coordinate System Framework:
+    - World Frame A: Fixed global reference (never changes)
+    - Robot Point Frame B (Yaw-Aligned): Z-axis vertical, XY rotates with motion direction
+    - Robot Base Frame C (Body): Fully follows base orientation (roll, pitch, yaw)
+    
+    This function tracks the orientation of Base Frame C relative to Point Frame B.
+    The command specifies [roll, pitch, yaw] angles that define the desired orientation
+    of Base Frame C when Point Frame B is used as the reference.
     
     Args:
         env: Environment instance
         std: Tolerance parameter in radians (smaller = more sensitive)
               e.g., std=0.15rad ≈ 8.6° tolerance
-        command_name: Command name in command manager
+        command_name: Command name in command manager (must be 7D command)
         asset_cfg: Robot asset configuration
         
     Returns:
         Reward values with shape (num_envs,)
         
     Design Intent:
-        - Exponential growth: smaller errors get exponentially higher rewards
-        - More sensitive than squared error version
-        - Resolves learning conflicts caused by original ang_vel_xy_l2 penalty
-        - Considers both roll and pitch dimensions
+        - Use quaternion math in yaw-aligned frame (Point Frame B)
+        - Supports full 3D orientation control (roll, pitch, yaw)
+        - More accurate than angle decomposition (no coupling errors)
+        - Exponential reward function for sensitivity to small errors
         
-    Reward Characteristics (assuming single-axis error):
-        - Error = 0.00rad (0°): reward = 1.00 (perfect)
-        - Error = 0.05rad (2.9°): reward ≈ 0.72 (good)
-        - Error = 0.15rad (8.6°, =std): reward ≈ 0.37 (acceptable)
-        - Error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
+    Reward Characteristics:
+        - Angle error = 0.00rad (0°): reward = 1.00 (perfect)
+        - Angle error = 0.05rad (2.9°): reward ≈ 0.72 (good)
+        - Angle error = 0.15rad (8.6°, =std): reward ≈ 0.37 (acceptable)
+        - Angle error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
+        
+    Implementation:
+        1. Extract target [roll, pitch, yaw] from 7D command (indices 4, 5, 6)
+        2. Convert to target quaternion in Point Frame B
+        3. Get current base quaternion in World Frame A
+        4. Extract motion direction (yaw_motion) from World Frame A
+        5. Project current quaternion to Point Frame B by removing motion direction
+        6. Compute quaternion error between target and current (both in Point Frame B)
+        7. Extract rotation angle from error quaternion
+        8. Apply exponential reward based on angle error
     """
+    from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, quat_conjugate
+    
     asset: RigidObject = env.scene[asset_cfg.name]
     
-    # Get target orientation command (5th and 6th dimensions of command)
+    # Get target orientation command (indices 4, 5, 6 of 7D command: [vx, vy, ωz, h, roll, pitch, yaw])
     command = env.command_manager.get_command(command_name)
-    target_roll = command[:, 4]
-    target_pitch = command[:, 5]
+    target_roll = command[:, 4]   # (num_envs,) - Roll in Point Frame B
+    target_pitch = command[:, 5]  # (num_envs,) - Pitch in Point Frame B  
+    target_yaw = command[:, 6]    # (num_envs,) - Yaw in Point Frame B
     
-    # Calculate current orientation from projected_gravity
-    # projected_gravity_b is gravity projection in body frame [gx, gy, gz]
-    # When robot is upright: gravity = [0, 0, -1], we want roll=0, pitch=0
-    projected_gravity = asset.data.projected_gravity_b
+    # Convert target [roll, pitch, yaw] to quaternion in Point Frame B
+    # Quaternion order: [w, x, y, z]
+    target_quat = quat_from_euler_xyz(
+        roll=target_roll,
+        pitch=target_pitch,
+        yaw=target_yaw  # Now we include yaw in pose control
+    )  # (num_envs, 4)
     
-    # FIXED: Correct formula to handle upright robot giving roll=0, pitch=0
-    # Roll: rotation around x-axis, roll = atan2(gy, -gz)
-    current_roll = torch.atan2(projected_gravity[:, 1], -projected_gravity[:, 2])
+    # Get current base quaternion in World Frame A
+    current_quat_w = asset.data.root_quat_w  # (num_envs, 4) in [w, x, y, z] format
     
-    # Pitch: rotation around y-axis, pitch = atan2(-gx, -gz)
-    current_pitch = torch.atan2(-projected_gravity[:, 0], -projected_gravity[:, 2])
+    # Extract motion direction (yaw_motion) from World Frame A
+    # This represents the rotation from World Frame A to Point Frame B
+    # For quaternion [w, x, y, z], yaw angle can be extracted by projecting to z-axis:
+    # yaw = atan2(2*(w*z + x*y), w^2 + x^2 - y^2 - z^2)
+    # This is more numerically stable than the 1 - 2*(y^2 + z^2) form
+    w, x, y, z = current_quat_w[:, 0], current_quat_w[:, 1], current_quat_w[:, 2], current_quat_w[:, 3]
+    yaw_angle = torch.atan2(2 * (w * z + x * y), w * w + x * x - y * y - z * z)
     
-    # Calculate absolute errors for roll and pitch
-    # Use modulo arithmetic to handle angle wrapping [-π, π]
-    roll_error = target_roll - current_roll
-    pitch_error = target_pitch - current_pitch
+    # Create pure yaw quaternion: q_yaw = [cos(yaw/2), 0, 0, sin(yaw/2)]
+    # This quaternion is automatically normalized since cos²(θ/2) + sin²(θ/2) = 1
+    half_yaw = yaw_angle / 2
+    current_yaw_quat = torch.stack([
+        torch.cos(half_yaw),  # w
+        torch.zeros_like(half_yaw),  # x
+        torch.zeros_like(half_yaw),  # y
+        torch.sin(half_yaw)   # z
+    ], dim=1)  # (num_envs, 4) - guaranteed to be normalized
     
-    # Normalize angles to [-π, π] range to avoid wrap-around issues
-    roll_error = torch.atan2(torch.sin(roll_error), torch.cos(roll_error))
-    pitch_error = torch.atan2(torch.sin(pitch_error), torch.cos(pitch_error))
+    # Remove yaw from current quaternion to get yaw-aligned orientation
+    # current_quat_yaw_aligned = yaw_quat^(-1) * current_quat_w
+    current_yaw_quat_inv = quat_conjugate(current_yaw_quat)
+    current_quat_yaw_aligned = quat_mul(current_yaw_quat_inv, current_quat_w)  # (num_envs, 4)
     
-    # Calculate absolute errors
-    roll_error_abs = torch.abs(roll_error)
-    pitch_error_abs = torch.abs(pitch_error)
-    total_error_abs = roll_error_abs + pitch_error_abs
+    # Compute quaternion error in yaw-aligned frame: q_error = q_current^(-1) * q_target
+    # This gives us the rotation needed to go from current to target orientation
+    # The magnitude of rotation angle is the same regardless of multiplication order,
+    # but this order is semantically clearer for future directional error analysis
+    current_quat_inv = quat_conjugate(current_quat_yaw_aligned)
+    quat_error = quat_mul(current_quat_inv, target_quat)  # (num_envs, 4)
+    
+    # Extract rotation angle from error quaternion
+    # For quaternion q = [w, x, y, z], rotation angle θ = 2 * arccos(|w|)
+    # Clamp w to [-1, 1] to avoid numerical issues with arccos
+    quat_w = torch.clamp(quat_error[:, 0], -1.0, 1.0)
+    angle_error = 2.0 * torch.acos(torch.abs(quat_w))  # (num_envs,)
     
     # Use exponential growth reward: smaller error -> exponentially higher reward
     # reward = exp(-|error|/std) where std controls sensitivity
-    # When error=0: reward=1.0, When error=std: reward≈0.37
-    reward = torch.exp(-total_error_abs / std)
+    reward = torch.exp(-angle_error / std)
     
     # Only give reward when robot is upright
+    projected_gravity = asset.data.projected_gravity_b
     upright_factor = torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
     reward *= upright_factor
     
-    # Debug: Print statistics every 100 steps to catch the issue early
+    # Disable reward during Stage 1 (base training phase, 0-20,000 iterations)
+    # In Stage 1, focus on basic locomotion without orientation control
+    if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
+        reward = torch.zeros_like(reward)
+    
+    # Debug: Print statistics every 100 steps
     if not hasattr(env, "_orient_debug_counter"):
         env._orient_debug_counter = 0
     env._orient_debug_counter += 1
     if env._orient_debug_counter % 100 == 0:
         gz = projected_gravity[:, 2]
-        print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}):")
+        # Verify yaw quaternion normalization
+        yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
+        current_quat_w_norm = torch.norm(current_quat_w, dim=1)
+        
+        stage_info = f" [Stage {env._curriculum_stage} - DISABLED]" if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1 else ""
+        print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}){stage_info}:")
+        print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
+        print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
+        print(f"  Target yaw (deg):              mean={torch.rad2deg(target_yaw).mean().item():.2f}, max={torch.rad2deg(target_yaw.abs()).max().item():.2f}")
+        print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
+        print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
+        print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
+        print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
+        print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
+        print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
+        print(f"  Error quat [w,x,y,z]:          mean=[{quat_error[:, 0].mean():.3f}, {quat_error[:, 1].mean():.3f}, {quat_error[:, 2].mean():.3f}, {quat_error[:, 3].mean():.3f}]")
+        print(f"  Error quat w component:        mean={quat_error[:, 0].mean():.6f}, min={quat_error[:, 0].min():.6f}, max={quat_error[:, 0].max():.6f}")
+        print(f"  Quaternion error angle (deg):  mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
         print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
         print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
-        print(f"  Roll error (deg):              mean={torch.rad2deg(roll_error_abs).mean().item():.2f}, max={torch.rad2deg(roll_error_abs).max().item():.2f}")
-        print(f"  Pitch error (deg):             mean={torch.rad2deg(pitch_error_abs).mean().item():.2f}, max={torch.rad2deg(pitch_error_abs).max().item():.2f}")
-        print(f"  Total error (deg):             mean={torch.rad2deg(total_error_abs).mean().item():.2f}, max={torch.rad2deg(total_error_abs).max().item():.2f}")
-        print(f"  Raw reward (before upright):   mean={torch.exp(-total_error_abs / std).mean().item():.6f}")
+        print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
         print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
@@ -362,11 +427,11 @@ def stand_still_full_cmd(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     
-    # Get full 6D command
+    # Get full 7D command
     command = env.command_manager.get_command(command_name)
     velocity_cmd = command[:, :3]  # [vx, vy, ωz]
     height_cmd = command[:, 3]
-    pose_cmd = command[:, 4:6]  # [roll, pitch]
+    pose_cmd = command[:, 4:7]  # [roll, pitch, yaw]
     
     # Get default height
     default_height = env.command_manager.get_term("base_velocity_pose").default_height
@@ -432,11 +497,11 @@ def joint_pos_penalty_full_cmd(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     
-    # Get full 6D command
+    # Get full 7D command
     command = env.command_manager.get_command(command_name)
     velocity_cmd = command[:, :3]
     height_cmd = command[:, 3]
-    pose_cmd = command[:, 4:6]
+    pose_cmd = command[:, 4:7]
     
     # Get default height
     default_height = env.command_manager.get_term("base_velocity_pose").default_height
@@ -512,8 +577,8 @@ def is_moving_full_cmd(
     default_height = env.command_manager.get_term("base_velocity_pose").default_height
     height_cmd_diff = torch.abs(command[:, 3] - default_height)
     
-    # Calculate orientation command norm
-    pose_cmd_norm = torch.norm(command[:, 4:6], dim=1)
+    # Calculate orientation command norm (roll, pitch, yaw)
+    pose_cmd_norm = torch.norm(command[:, 4:7], dim=1)
     
     # Consider moving if any dimension has command change
     return (velocity_cmd_norm > velocity_threshold) | \
