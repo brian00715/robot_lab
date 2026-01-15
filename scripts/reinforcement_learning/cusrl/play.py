@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 """Script to play a checkpoint if an RL agent from CusRL."""
@@ -58,6 +58,7 @@ import gymnasium as gym
 import torch
 
 import cusrl
+import robot_lab.tasks  # noqa: F401
 from cusrl.environment.isaaclab import TrainerCfg
 
 from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
@@ -67,9 +68,8 @@ from isaaclab.envs import ManagerBasedRLEnvCfg  # noqa: F401
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.dict import print_dict
-from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
 
-import robot_lab.tasks  # noqa: F401
+from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
 
 
 class CameraFollowPlayerHook(cusrl.Player.Hook):

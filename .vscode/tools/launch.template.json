@@ -1,66 +1,81 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        // For standalone script execution
-        {
-            "name": "Python: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-        },
-        {
-            "name": "Python: Train Environment",
-            "type": "debugpy",
-            "request": "launch",
-            "args" : ["--task", "RobotLab-Isaac-Velocity-Flat-Anymal-D-v0", "--num_envs", "4096", "--headless"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/train.py",
-            "console": "integratedTerminal",
-        },
-        {
-            "name": "Python: Play Environment",
-            "type": "debugpy",
-            "request": "launch",
-            "args" : ["--task", "RobotLab-Isaac-Velocity-Flat-Anymal-D-Play-v0", "--num_envs", "32"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
-            "console": "integratedTerminal",
-        },
+    "files.associations": {
+        "*.tpp": "cpp",
+        "*.kit": "toml",
+        "*.rst": "restructuredtext"
+    },
+    "editor.rulers": [120],
 
-        // For script execution inside a Docker
-        {
-            "name": "Docker: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
-            }
-        },
-        {
-            "name": "Docker: Train Environment",
-            "type": "debugpy",
-            "request": "launch",
-            "args" : ["--task", "RobotLab-Isaac-Velocity-Flat-Anymal-D-v0", "--num_envs", "4096", "--headless"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/train.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
-            }
-        },
-        {
-            "name": "Docker: Play Environment",
-            "type": "debugpy",
-            "request": "launch",
-            "args" : ["--task", "RobotLab-Isaac-Velocity-Flat-Anymal-D-Play-v0", "--num_envs", "32"],
-            "program": "${workspaceFolder}/scripts/rsl_rl/play.py",
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${env:PYTHONPATH}:${workspaceFolder}"
-            }
-        }
-    ]
+    // files to be ignored by the linter
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/node_modules/**": true,
+        "**/_isaac_sim/**": true,
+        "**/_compiler/**": true
+    },
+    // Configuration for spelling checker
+    "spellright.language": [
+        "en-US-10-1."
+    ],
+    "spellright.documentTypes": [
+        "markdown",
+        "latex",
+        "plaintext",
+        "cpp",
+        "asciidoc",
+        "python",
+        "restructuredtext"
+    ],
+    "cSpell.words": [
+        "literalinclude",
+        "linenos",
+        "instanceable",
+        "isaacSim",
+        "jacobians",
+        "pointcloud",
+        "ridgeback",
+        "rllib",
+        "robomimic",
+        "teleoperation",
+        "xform",
+        "numpy",
+        "tensordict",
+        "flatcache",
+        "physx",
+        "dpad",
+        "gamepad",
+        "linspace",
+        "upsampled",
+        "downsampled",
+        "arange",
+        "discretization",
+        "trimesh",
+        "uninstanceable"
+    ],
+    // This enables python language server. Seems to work slightly better than jedi:
+    "python.languageServer": "Pylance",
+    // We use "black" as a formatter:
+    "black-formatter.args": ["--line-length", "120", "--unstable"],
+    // Use ruff as a linter
+    "ruff.configuration": "${workspaceFolder}/pyproject.toml",
+    // Use docstring generator
+    "autoDocstring.docstringFormat": "google",
+    "autoDocstring.guessTypes": true,
+    // Python environment path
+    // note: the default interpreter is overridden when user selects a workspace interpreter
+    //     in the status bar. For example, the virtual environment python interpreter
+    "python.defaultInterpreterPath": "",
+    // ROS distribution
+    "ros.distro": "noetic",
+    // Language specific settings
+    "[python]": {
+        "editor.tabSize": 4
+    },
+    "[restructuredtext]": {
+        "editor.tabSize": 2
+    },
+    // Python extra paths
+    // Note: this is filled up when vscode is set up for the first time
+    "python.analysis.extraPaths": []
 }

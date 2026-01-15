@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright (c) 2025 Linden
@@ -43,11 +43,10 @@ simulation_app = app_launcher.app
 import torch
 
 from motion_loader import MotionLoader
+from robot_lab.assets.unitree import UNITREE_G1_29DOF_CFG
 
 import isaaclab.sim as sim_utils
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-
-from robot_lab.assets.unitree import UNITREE_G1_29DOF_CFG
 
 # Load motion data and get dt
 motion = MotionLoader(args_cli.motion, device=args_cli.device)

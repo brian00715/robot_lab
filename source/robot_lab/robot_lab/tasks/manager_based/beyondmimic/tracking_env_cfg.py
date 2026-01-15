@@ -1,9 +1,11 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from dataclasses import MISSING
+
+import robot_lab.tasks.manager_based.beyondmimic.mdp as mdp
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
@@ -23,8 +25,6 @@ from isaaclab.terrains import TerrainImporterCfg
 ##
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-
-import robot_lab.tasks.manager_based.beyondmimic.mdp as mdp
 
 ##
 # Scene definition

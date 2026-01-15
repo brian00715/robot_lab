@@ -14,7 +14,7 @@
 
 The table below lists all available environments:
 
-| Category   | Robot Model         | Environment Name (ID)                                      | Screenshot |
+| Category   | Robot Model         | Environment Name (<ENV_NAME>)                                      | Screenshot |
 |------------|---------------------|------------------------------------------------------------|------------|
 | **Quadruped** | [Anymal D](https://www.anybotics.com/robotics/anymal) | RobotLab-Isaac-Velocity-Rough-Anymal-D-v0 | <img src="./docs/imgs/anymal_d.png" alt="anymal_d" width="75"> |
 |            | [Unitree Go2](https://www.unitree.com/go2) | RobotLab-Isaac-Velocity-Rough-Unitree-Go2-v0 | <img src="./docs/imgs/unitree_go2.png" alt="unitree_go2" width="75"> |
@@ -198,20 +198,29 @@ RSL-RL:
 
 ```bash
 # Train
-python scripts/reinforcement_learning/rsl_rl/train.py --task=<ENV_NAME> --headless
+python scripts/reinforcement_learning/rsl_rl/train.py --task=<TASK_NAME> --headless
 
 # Play
-python scripts/reinforcement_learning/rsl_rl/play.py --task=<ENV_NAME>
+python scripts/reinforcement_learning/rsl_rl/play.py --task=<TASK_NAME>
 ```
 
 CusRL (**Experimental**):
 
 ```bash
 # Train
-python scripts/reinforcement_learning/cusrl/train.py --task=<ENV_NAME> --headless
+python scripts/reinforcement_learning/cusrl/train.py --task=<TASK_NAME> --headless
 
 # Play
-python scripts/reinforcement_learning/cusrl/play.py --task=<ENV_NAME>
+python scripts/reinforcement_learning/cusrl/play.py --task=<TASK_NAME>
+```
+
+Running a task with dummy agents (These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly):
+
+```bash
+# Zero-action agent
+python scripts/tools/zero_agent.py --task=<TASK_NAME>
+# Random-action agent
+python scripts/tools/random_agent.py --task=<TASK_NAME>
 ```
 
 BeyondMimic for Unitree G1:
@@ -312,18 +321,18 @@ Others (**Experimental**)
 * Resume training from folder or checkpoint, add `--resume --load_run run_folder_name --checkpoint /PATH/TO/model.pt`
 * To train with multiple GPUs, use the following command, where --nproc_per_node represents the number of available GPUs:
     ```bash
-    python -m torch.distributed.run --nnodes=1 --nproc_per_node=2 scripts/reinforcement_learning/rsl_rl/train.py --task=<ENV_NAME> --headless --distributed
+    python -m torch.distributed.run --nnodes=1 --nproc_per_node=2 scripts/reinforcement_learning/rsl_rl/train.py --task=<TASK_NAME> --headless --distributed
     ```
 * To scale up training beyond multiple GPUs on a single machine, it is also possible to train across multiple nodes. To train across multiple nodes/machines, it is required to launch an individual process on each node.
 
     For the master node, use the following command, where --nproc_per_node represents the number of available GPUs, and --nnodes represents the number of nodes:
     ```bash
-    python -m torch.distributed.run --nproc_per_node=2 --nnodes=2 --node_rank=0 --rdzv_id=123 --rdzv_backend=c10d --rdzv_endpoint=localhost:5555 scripts/reinforcement_learning/rsl_rl/train.py --task=<ENV_NAME> --headless --distributed
+    python -m torch.distributed.run --nproc_per_node=2 --nnodes=2 --node_rank=0 --rdzv_id=123 --rdzv_backend=c10d --rdzv_endpoint=localhost:5555 scripts/reinforcement_learning/rsl_rl/train.py --task=<TASK_NAME> --headless --distributed
     ```
     Note that the port (`5555`) can be replaced with any other available port.
     For non-master nodes, use the following command, replacing `--node_rank` with the index of each machine:
     ```bash
-    python -m torch.distributed.run --nproc_per_node=2 --nnodes=2 --node_rank=1 --rdzv_id=123 --rdzv_backend=c10d --rdzv_endpoint=ip_of_master_machine:5555 scripts/reinforcement_learning/rsl_rl/train.py --task=<ENV_NAME> --headless --distributed
+    python -m torch.distributed.run --nproc_per_node=2 --nnodes=2 --node_rank=1 --rdzv_id=123 --rdzv_backend=c10d --rdzv_endpoint=ip_of_master_machine:5555 scripts/reinforcement_learning/rsl_rl/train.py --task=<TASK_NAME> --headless --distributed
     ```
 
 ## Add your own robot

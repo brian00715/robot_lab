@@ -1,7 +1,7 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -18,7 +18,15 @@ with `Isaac` in their name.
 
 """Launch Isaac Sim Simulator first."""
 
+import argparse
+
 from isaaclab.app import AppLauncher
+
+# add argparse arguments
+parser = argparse.ArgumentParser(description="List Isaac Lab environments.")
+parser.add_argument("--keyword", type=str, default=None, help="Keyword to filter environments.")
+# parse the arguments
+args_cli = parser.parse_args()
 
 # launch omniverse app
 app_launcher = AppLauncher(headless=True)
@@ -52,7 +60,7 @@ def main():
     index = 0
     # acquire all Isaac environments names
     for task_spec in gym.registry.values():
-        if "RobotLab" in task_spec.id:
+        if "RobotLab" in task_spec.id and (args_cli.keyword is None or args_cli.keyword in task_spec.id):
             # wrap long text in each column before adding it to the table
             task_name = textwrap.fill(task_spec.id, max_width)
             entry_point = textwrap.fill(task_spec.entry_point, max_width)

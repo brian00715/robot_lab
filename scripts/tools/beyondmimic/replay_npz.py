@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 """This script demonstrates how to use the interactive scene interface to setup a scene with multiple prims.
@@ -32,18 +32,18 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+##
+# Pre-defined configs
+##
+from robot_lab.assets.unitree import UNITREE_G1_29DOF_CFG
+from robot_lab.tasks.manager_based.beyondmimic.mdp import MotionLoader
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-
-##
-# Pre-defined configs
-##
-from robot_lab.assets.unitree import UNITREE_G1_29DOF_CFG
-from robot_lab.tasks.manager_based.beyondmimic.mdp import MotionLoader
 
 
 @configclass

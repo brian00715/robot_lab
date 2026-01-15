@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 """Script to train RL agent with CusRL."""
@@ -59,6 +59,7 @@ import torch
 from datetime import datetime
 
 import cusrl
+import robot_lab.tasks  # noqa: F401
 from cusrl.environment.isaaclab import TrainerCfg
 
 from isaaclab.envs import DirectMARLEnvCfg  # noqa: F401
@@ -66,9 +67,8 @@ from isaaclab.envs import DirectRLEnvCfg  # noqa: F401
 from isaaclab.envs import ManagerBasedRLEnvCfg  # noqa: F401
 from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
 from isaaclab.utils.dict import print_dict
-from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
 
-import robot_lab.tasks  # noqa: F401
+from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True

@@ -1,4 +1,4 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -6,11 +6,11 @@ from __future__ import annotations
 import torch
 from typing import TYPE_CHECKING
 
+from robot_lab.tasks.manager_based.beyondmimic.mdp.commands import MotionCommand
+
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_error_magnitude
-
-from robot_lab.tasks.manager_based.beyondmimic.mdp.commands import MotionCommand
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv

@@ -1,11 +1,10 @@
-# Copyright (c) 2024-2025 Ziqi Fan
+# Copyright (c) 2024-2026 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
 from dataclasses import dataclass
 
 import cusrl
 from cusrl.environment.isaaclab import TrainerCfg
-
 from robot_lab.tasks.manager_based.locomotion.velocity.mdp.symmetry import anymal
 
 
