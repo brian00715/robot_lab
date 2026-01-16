@@ -43,7 +43,7 @@ GO2_X5_CFG = ArticulationCfg(
     soft_joint_pos_limit_factor=0.9,
     actuators={
         "legs": DelayedPDActuatorCfg(
-            joint_names_expr=[".*"],
+            joint_names_expr=["R[FL,FR,RL,RR]_[hip,thigh,calf]_joint"],
             effort_limit=33.5,
             velocity_limit=21.0,
             stiffness=25.0,
@@ -66,4 +66,12 @@ GO2_X5_CFG = ArticulationCfg(
         #     damping=0.5,
         # ),
     },
+    # joint_sdk_names=[
+    #     "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+    #     "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+    #     "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+    #     "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+    #     "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+    #     "gripper_joint_left", "gripper_joint_right",
+    # ],
 )
