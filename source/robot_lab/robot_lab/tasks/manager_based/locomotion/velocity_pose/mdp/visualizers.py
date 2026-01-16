@@ -16,303 +16,270 @@ if TYPE_CHECKING:
 
 
 class VelocityPoseCommandVisualizer:
-    """可视化VelocityPose的6D指令: [vx, vy, w_z, height, roll, pitch]
+    """Visualizer for VelocityPose 6D commands: [vx, vy, w_z, height, roll, pitch]
     
-    为每个机器人在质心正上方显示：
-    - 目标姿态坐标轴（原点高度 = 目标高度指令）
-    - RGB坐标轴根据roll/pitch旋转
+    Displays target and current pose axes above robot CoM with RGB colors.
     """
     
     def __init__(self, env: "ManagerBasedEnv", num_envs: int):
-        """初始化可视化器
+        """Initialize visualizer
         
         Args:
-            env: Manager-based RL环境
-            num_envs: 环境数量
+            env: Manager-based RL environment
+            num_envs: Number of environments
         """
         self.env = env
         self.num_envs = num_envs
         self.device = env.device
         
-        # 创建markers用于可视化
+        # Create visualization markers
         self._create_markers()
         
-        print(f"[VelocityPoseVisualizer] 初始化完成，为{num_envs}个机器人创建可视化")
+        print(f"[VelocityPoseVisualizer] Initialized for {num_envs} robots")
     
     def _create_markers(self):
-        """创建可视化markers - 为每个元素创建独立的marker
+        """Create visualization markers
         
-        创建两组坐标轴：
-        1. 目标姿态（亮色）- 来自命令指令
-        2. 当前姿态（暗色）- 来自重力投影计算
+        Two sets of coordinate axes:
+        1. Target pose (bright colors) - from command
+        2. Current pose (dark colors) - from gravity projection
         """
-        # 坐标轴尺寸
-        axis_length = 0.3   # 30cm长的圆柱
-        axis_radius = 0.01  # 1cm粗
-        sphere_radius = 0.025  # 2.5cm球体
+        # Axis dimensions
+        axis_length = 0.3   # 30cm cylinder
+        axis_radius = 0.01  # 1cm radius
+        sphere_radius = 0.025  # 2.5cm sphere
         
         # ============================================================
-        # 目标姿态可视化（亮色，来自指令）
+        # Target pose visualization (bright, from command)
         # ============================================================
         
-        # 目标原点球 - 黄色
+        # Target origin - yellow
         target_origin_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/target_origin",
             markers={
                 "sphere": sim_utils.SphereCfg(
                     radius=sphere_radius,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 0.0)),  # 亮黄色
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 0.0)),
                 ),
             },
         )
         self.target_origin_marker = VisualizationMarkers(target_origin_cfg)
         
-        # 目标X轴 - 亮红色
+        # Target X-axis - bright red
         target_x_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/target_x_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),  # 亮红
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.0, 0.0)),
                 ),
             },
         )
         self.target_x_axis_marker = VisualizationMarkers(target_x_axis_cfg)
         
-        # 目标Y轴 - 亮绿色
+        # Target Y-axis - bright green
         target_y_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/target_y_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),  # 亮绿
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
                 ),
             },
         )
         self.target_y_axis_marker = VisualizationMarkers(target_y_axis_cfg)
         
-        # 目标Z轴 - 亮蓝色
+        # Target Z-axis - bright blue
         target_z_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/target_z_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),  # 亮蓝
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 1.0)),
                 ),
             },
         )
         self.target_z_axis_marker = VisualizationMarkers(target_z_axis_cfg)
         
         # ============================================================
-        # 当前姿态可视化（暗色，来自重力投影）
+        # Current pose visualization (dark, from gravity)
         # ============================================================
         
-        # 当前原点球 - 橙色
+        # Current origin - orange
         current_origin_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/current_origin",
             markers={
                 "sphere": sim_utils.SphereCfg(
-                    radius=sphere_radius * 0.8,  # 稍小一点
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.5, 0.0)),  # 橙色
+                    radius=sphere_radius * 0.8,
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.5, 0.0)),
                 ),
             },
         )
         self.current_origin_marker = VisualizationMarkers(current_origin_cfg)
         
-        # 当前X轴 - 暗红色
+        # Current X-axis - dark red
         current_x_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/current_x_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius * 0.8,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.0, 0.0)),  # 暗红
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.0, 0.0)),
                 ),
             },
         )
         self.current_x_axis_marker = VisualizationMarkers(current_x_axis_cfg)
         
-        # 当前Y轴 - 暗绿色
+        # Current Y-axis - dark green
         current_y_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/current_y_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius * 0.8,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.6, 0.0)),  # 暗绿
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.6, 0.0)),
                 ),
             },
         )
         self.current_y_axis_marker = VisualizationMarkers(current_y_axis_cfg)
         
-        # 当前Z轴 - 暗蓝色
+        # Current Z-axis - dark blue
         current_z_axis_cfg = VisualizationMarkersCfg(
             prim_path="/Visuals/VelocityPoseCommand/current_z_axis",
             markers={
                 "cylinder": sim_utils.CylinderCfg(
                     radius=axis_radius * 0.8,
                     height=axis_length,
-                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 0.6)),  # 暗蓝
+                    visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 0.0, 0.6)),
                 ),
             },
         )
         self.current_z_axis_marker = VisualizationMarkers(current_z_axis_cfg)
     
     def update(self, commands: torch.Tensor, robot: Articulation):
-        """更新可视化 - 同时显示目标姿态和当前姿态
+        """Update visualization - display both target and current pose
         
         Args:
             commands: (N, 6) [vx, vy, w_z, height, roll, pitch]
-            robot: 机器人articulation
+            robot: Robot articulation
         """
-        # 获取当前base位置和姿态
-        base_pos_w = robot.data.root_pos_w  # (N, 3)
-        base_quat_w = robot.data.root_quat_w  # (N, 4) [w, x, y, z]
+        # Get current base position and orientation
+        base_pos_w = robot.data.root_pos_w
+        base_quat_w = robot.data.root_quat_w
         
-        # 解析目标命令
-        target_height = commands[:, 3]  # 目标高度
-        target_roll = commands[:, 4]    # 目标roll角
-        target_pitch = commands[:, 5]   # 目标pitch角
+        # Parse target commands
+        target_height = commands[:, 3]
+        target_roll = commands[:, 4]
+        target_pitch = commands[:, 5]
         
-        # ============================================================
-        # 步骤1: 从重力投影计算当前实际姿态（roll和pitch）
-        # ============================================================
+        # Compute current orientation from gravity projection
         current_roll, current_pitch = self._compute_orientation_from_gravity(robot)
-        current_height = base_pos_w[:, 2]  # 当前实际高度
         
-        # ============================================================
-        # 步骤2: 计算目标姿态的可视化（在世界坐标系中）
-        # ============================================================
-        # 目标原点位置：质心XY + 目标高度Z
+        # Compute target pose visualization (in world frame)
+        # Target origin position: CoM XY + target height Z
         target_origin_pos = base_pos_w.clone()
         target_origin_pos[:, 2] = target_height
         
-        # CRITICAL: 目标四元数的正确计算
-        # 
-        # 命令中的 roll/pitch 定义在 Point Frame B (Yaw-Aligned Frame) 中
-        # 即：Base Frame C 相对于 Point Frame B 的姿态
-        #
-        # 为了在世界坐标系中可视化，需要：
-        # target_quat_world = yaw_quat × target_quat_relative
-        #
-        # 其中：
-        # - yaw_quat: Point Frame B 相对于 World Frame A 的旋转（只有 yaw）
-        # - target_quat_relative: 命令中的相对姿态（roll, pitch, yaw=0）
+        # CRITICAL: Correct computation of target quaternion
+        # Commands define roll/pitch in Point Frame B (Yaw-Aligned Frame)
+        # To visualize in world frame: target_quat_world = yaw_quat * target_quat_relative
         
         from isaaclab.utils.math import yaw_quat, quat_mul, quat_conjugate
         
-        # 1. 获取当前机器人的 yaw 四元数（Point Frame B 在世界坐标系中的朝向）
-        current_yaw_quat = yaw_quat(base_quat_w)  # (N, 4) - 只保留 yaw，roll=0, pitch=0
+        # Get robot's yaw quaternion (Point Frame B orientation in world)
+        current_yaw_quat = yaw_quat(base_quat_w)
         
-        # 2. 计算命令中的相对姿态（Base Frame C 相对于 Point Frame B）
-        # 注意：这里的 yaw=0，因为 yaw 已经包含在 current_yaw_quat 中了
+        # Compute relative pose from command (Base Frame C relative to Point Frame B)
         target_quat_relative = quat_from_euler_xyz(target_roll, target_pitch, torch.zeros_like(target_roll))
         
-        # 3. 组合得到世界坐标系中的目标姿态
-        # target_quat_world = yaw_quat × target_quat_relative
+        # Combine to get target pose in world frame
         target_quat_world = quat_mul(current_yaw_quat, target_quat_relative)
         
-        # 计算目标坐标轴（圆柱一端在原点）
+        # Compute target coordinate axes (cylinder with one end at origin)
         target_axes = self._compute_axis_markers(target_origin_pos, target_quat_world, axis_length=0.3)
         
-        # ============================================================
-        # 步骤3: 计算当前姿态的可视化（在世界坐标系中）
-        # ============================================================
-        # 当前原点位置：质心实际位置
+        # Compute current pose visualization (in world frame)
         current_origin_pos = base_pos_w.clone()
         
-        # CRITICAL: 直接使用机器人在世界坐标系中的实际四元数
-        # 不要从 roll/pitch 重新计算！因为那会丢失 yaw 信息
-        current_quat_world = base_quat_w.clone()  # (N, 4) - 机器人的实际世界姿态
+        # CRITICAL: Use robot's actual world quaternion directly
+        current_quat_world = base_quat_w.clone()
         
-        # 计算当前坐标轴（圆柱一端在原点）
+        # Compute current coordinate axes (cylinder with one end at origin)
         current_axes = self._compute_axis_markers(current_origin_pos, current_quat_world, axis_length=0.3)
         
-        # ============================================================
-        # 步骤4: 更新所有markers
-        # ============================================================
+        # Update all markers
         identity_quat = torch.zeros((self.num_envs, 4), device=self.device)
         identity_quat[:, 0] = 1.0
         
-        # 目标姿态（亮色）
+        # Target pose (bright colors)
         self.target_origin_marker.visualize(target_origin_pos, identity_quat)
         self.target_x_axis_marker.visualize(target_axes['x_pos'], target_axes['x_quat'])
         self.target_y_axis_marker.visualize(target_axes['y_pos'], target_axes['y_quat'])
         self.target_z_axis_marker.visualize(target_axes['z_pos'], target_axes['z_quat'])
         
-        # 当前姿态（暗色）
+        # Current pose (dark colors)
         self.current_origin_marker.visualize(current_origin_pos, identity_quat)
         self.current_x_axis_marker.visualize(current_axes['x_pos'], current_axes['x_quat'])
         self.current_y_axis_marker.visualize(current_axes['y_pos'], current_axes['y_quat'])
         self.current_z_axis_marker.visualize(current_axes['z_pos'], current_axes['z_quat'])
     
     def _compute_orientation_from_gravity(self, robot: Articulation) -> tuple[torch.Tensor, torch.Tensor]:
-        """从重力投影计算当前base的roll和pitch角
+        """Compute current base roll and pitch from gravity projection
         
-        原理：
-        - 重力在base坐标系中的投影 = R^T * g_world
-        - 其中 g_world = [0, 0, -1] （世界坐标系中重力向下）
-        - projected_gravity 就是重力在base坐标系中的表示
+        Principle:
+        - Gravity in base frame = R^T * g_world
+        - projected_gravity is gravity representation in base frame
         
-        从projected_gravity反推姿态：
-        - gx, gy, gz = projected_gravity的三个分量
-        - roll = atan2(gy, gz)  # 左右倾斜
-        - pitch = atan2(-gx, sqrt(gy^2 + gz^2))  # 前后俯仰
+        Recover orientation from projected_gravity:
+        - roll = atan2(gy, gz)  # Left-right tilt
+        - pitch = atan2(-gx, sqrt(gy^2 + gz^2))  # Forward-backward tilt
         
         Args:
-            robot: 机器人articulation
+            robot: Robot articulation
             
         Returns:
-            roll: (N,) 当前roll角（弧度）
-            pitch: (N,) 当前pitch角（弧度）
+            roll: (N,) Current roll angle (radians)
+            pitch: (N,) Current pitch angle (radians)
         """
-        # 获取重力投影（base坐标系中的重力方向）
-        # 这个已经由环境计算好了
-        projected_gravity = robot.data.projected_gravity_b  # (N, 3) [gx, gy, gz]
+        projected_gravity = robot.data.projected_gravity_b
         
         gx = projected_gravity[:, 0]
         gy = projected_gravity[:, 1]
         gz = projected_gravity[:, 2]
         
-        # 从重力投影计算roll和pitch
-        # roll: 绕X轴旋转（左右倾斜）
+        # Compute roll and pitch from gravity projection
         roll = torch.atan2(gy, gz)
-        
-        # pitch: 绕Y轴旋转（前后俯仰）
         pitch = torch.atan2(-gx, torch.sqrt(gy**2 + gz**2))
         
         return roll, pitch
     
     def _compute_axis_markers(self, origin_pos: torch.Tensor, orientation_quat: torch.Tensor, 
                              axis_length: float) -> dict:
-        """计算坐标轴markers的位置和方向（圆柱一端在原点）
+        """Compute position and orientation for axis markers
         
-        修改为：圆柱的一端在原点处相交，而不是中心在原点
+        Cylinders have one end at origin, extending outward.
+        Cylinder center is at: origin + axis_direction * (length/2)
         
         Args:
-            origin_pos: (N, 3) 原点位置
-            orientation_quat: (N, 4) 姿态四元数
-            axis_length: 圆柱长度
+            origin_pos: (N, 3) Origin position
+            orientation_quat: (N, 4) Orientation quaternion
+            axis_length: Cylinder length
             
         Returns:
             dict with keys: x_pos, x_quat, y_pos, y_quat, z_pos, z_quat
         """
-        # 圆柱一端在原点，另一端延伸出去
-        # 所以圆柱中心应该在 origin + axis_direction * (length/2)
         half_length = axis_length / 2.0
         
-        # --- X轴（红色）---
-        # 方向：沿X轴正方向
+        # X-axis (red)
         x_direction = self._rotate_vector(
             torch.tensor([1.0, 0.0, 0.0], device=self.device).expand(self.num_envs, 3),
             orientation_quat
         )
-        x_pos = origin_pos + x_direction * half_length  # 圆柱中心
+        x_pos = origin_pos + x_direction * half_length
         
-        # 圆柱姿态：从Z轴旋转到X轴，再应用整体姿态
         x_quat = self._quat_multiply(
             orientation_quat,
             quat_from_euler_xyz(
@@ -322,7 +289,7 @@ class VelocityPoseCommandVisualizer:
             )
         )
         
-        # --- Y轴（绿色）---
+        # Y-axis (green)
         y_direction = self._rotate_vector(
             torch.tensor([0.0, 1.0, 0.0], device=self.device).expand(self.num_envs, 3),
             orientation_quat
@@ -338,7 +305,7 @@ class VelocityPoseCommandVisualizer:
             )
         )
         
-        # --- Z轴（蓝色）---
+        # Z-axis (blue)
         z_direction = self._rotate_vector(
             torch.tensor([0.0, 0.0, 1.0], device=self.device).expand(self.num_envs, 3),
             orientation_quat
@@ -357,24 +324,20 @@ class VelocityPoseCommandVisualizer:
         }
     
     def _rotate_vector(self, vec: torch.Tensor, quat: torch.Tensor) -> torch.Tensor:
-        """用四元数旋转向量
-        
-        使用Isaac Lab的内置函数
+        """Rotate vector by quaternion using Isaac Lab built-in function
         
         Args:
-            vec: (N, 3) 向量
-            quat: (N, 4) 四元数 [w, x, y, z]
+            vec: (N, 3) Vector
+            quat: (N, 4) Quaternion [w, x, y, z]
             
         Returns:
-            rotated_vec: (N, 3) 旋转后的向量
+            rotated_vec: (N, 3) Rotated vector
         """
         from isaaclab.utils.math import quat_apply
         return quat_apply(quat, vec)
     
     def _quat_multiply(self, q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
-        """四元数乘法 q1 * q2
-        
-        使用Isaac Lab的内置函数
+        """Quaternion multiplication q1 * q2 using Isaac Lab built-in function
         
         Args:
             q1, q2: (N, 4) [w, x, y, z]
@@ -385,6 +348,8 @@ class VelocityPoseCommandVisualizer:
         return quat_mul(q1, q2)
     
     def reset(self, env_ids: torch.Tensor):
-        """重置指定环境的可视化"""
-        # Markers会自动处理重置，无需额外操作
+        """Reset visualization for specified environments
+        
+        Markers handle reset automatically, no additional action needed.
+        """
         pass
