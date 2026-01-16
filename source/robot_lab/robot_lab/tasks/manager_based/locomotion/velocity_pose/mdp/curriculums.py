@@ -32,12 +32,15 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     """Update reward parameters (std and weight) based on curriculum stage.
     
     Stage-based reward parameter progression:
-    - Stage 1 (DISABLED): Rewards disabled for pure locomotion
-    - Stage 2 (DISABLED): Relaxed parameters (std_height=0.5m, std_orient=0.707rad)
-    - Stage 3 (0-15k): Strict parameters + increased weight
+    - Stage 1 (0-20k): Rewards DISABLED for pure locomotion learning
+      * Height/Orientation rewards weight = 0.0
+    - Stage 2 (20k-30k): Relaxed parameters (easier to learn)
+      * Height: std=0.5m, weight=2.0
+      * Orientation: std=0.707rad (40°), weight=1.0
+    - Stage 3 (30k-45k): Strict parameters + increased weight
       * Height: std=0.22m, weight=3.0
       * Orientation: std=0.316rad (18°), weight=1.5
-    - Stage 4 (15k+): Very strict parameters + high weight
+    - Stage 4 (45k+): Very strict parameters + high weight
       * Height: std=0.22m, weight=4.0
       * Orientation: std=0.316rad (18°), weight=2.0
     """
@@ -51,13 +54,31 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Rewards not configured, skip update
         return
     
+    # Stage 1: DISABLE height/orientation rewards for pure locomotion learning
+    if stage == 1:
+        height_reward_cfg.weight = 0.0  # Completely disabled
+        orient_reward_cfg.weight = 0.0  # Completely disabled
+        # std doesn't matter when weight=0, but set to relaxed values
+        height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
+        orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+    
+    # Stage 2: Relaxed tracking (easier to learn)
+    elif stage == 2:
+        # Height tracking: relaxed tolerance, moderate weight
+        height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
+        height_reward_cfg.weight = 2.0  # Moderate weight
+        
+        # Orientation tracking: relaxed tolerance, moderate weight
+        orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+        orient_reward_cfg.weight = 1.0  # Moderate weight
+    
     # Stage 3: Strict tracking with increased weight
-    if stage == 3:
-        # Height tracking: strict tolerance, moderate weight
+    elif stage == 3:
+        # Height tracking: strict tolerance, increased weight
         height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
         height_reward_cfg.weight = 3.0  # Increased from 2.0
         
-        # Orientation tracking: strict tolerance, moderate weight
+        # Orientation tracking: strict tolerance, increased weight
         orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
         orient_reward_cfg.weight = 1.5  # Increased from 1.0
     
@@ -248,10 +269,11 @@ def command_curriculum_height_pose(
     if not hasattr(env, "_curriculum_debug_counter"):
         env._curriculum_debug_counter = 0
         print(f"\n{'='*80}")
-        print(f"[Curriculum] Initialization - Stage 1 and 2 SKIPPED")
-        print(f"  Starting directly from Stage 3 (Medium range)")
-        print(f"  Stage 3: 0-15,000 iterations (±10cm, ±20° roll, ±12° pitch/yaw)")
-        print(f"  Stage 4: 15,000+ iterations (±15cm, ±30° roll, ±15° pitch/yaw)")
+        print(f"[Curriculum] Initialization - ALL 4 STAGES ENABLED")
+        print(f"  Stage 1: 0-20,000 iterations (Fixed pose, base locomotion)")
+        print(f"  Stage 2: 20,000-30,000 iterations (±3cm, ±8° roll)")
+        print(f"  Stage 3: 30,000-45,000 iterations (±10cm, ±20° roll, ±12° pitch/yaw)")
+        print(f"  Stage 4: 45,000+ iterations (±15cm, ±30° roll, ±15° pitch/yaw)")
         print(f"  num_envs: {env.num_envs}")
         print(f"  Iteration source: {iteration_source}")
         print(f"  Current total_iterations: {total_iterations:,}")
@@ -267,37 +289,34 @@ def command_curriculum_height_pose(
         print(f"  Current _curriculum_stage: {getattr(env, '_curriculum_stage', 'NOT SET')}")
     
     # Determine current stage based on total iterations
-    # MODIFIED: Skip Stage 1 and 2, start directly from Stage 3
-    # Stage 1: DISABLED (was 0-20,000 iterations, base training with fixed pose)
-    # Stage 2: DISABLED (was 0-10,000 iterations, small range)
-    # Stage 3: 0-15,000 (Medium range) --> NEW STARTING STAGE
-    # Stage 4: 15,000+ (Maximum range)
+    # ALL 4 STAGES ENABLED:
+    # Stage 1: 0-20,000 iterations (Base training with fixed pose)
+    # Stage 2: 20,000-30,000 iterations (Small range: ±3cm, ±8° roll)
+    # Stage 3: 30,000-45,000 iterations (Medium range: ±10cm, ±20° roll, ±12° pitch/yaw)
+    # Stage 4: 45,000+ iterations (Maximum range: ±15cm, ±30° roll, ±15° pitch/yaw)
     
-    # ORIGINAL Stage boundaries (commented out):
-    # if total_iterations < 20000:  # Stage 1: Base training
-    #     target_stage = 1
-    #     height_range = (default_height, default_height)  # Fixed at 0.33m
-    #     roll_range = (0.0, 0.0)  # Fixed at 0°
-    #     pitch_range = (0.0, 0.0)  # Fixed at 0°
-    #     yaw_range = (0.0, 0.0)  # Fixed at 0°
-    # elif total_iterations < 30000:  # Stage 2: Small range
-    #     target_stage = 2
-    #     height_range = (0.30, 0.36)  # ±3cm
-    #     roll_range = (-0.14, 0.14)  # ±8°
-    #     pitch_range = (0.0, 0.0)  # Keep pitch fixed
-    #     yaw_range = (0.0, 0.0)  # Keep yaw fixed
-    
-    # NEW Stage boundaries (starting from Stage 3):
-    if total_iterations < 15000:  # Stage 3: Medium range (0-15k iterations) - STARTING STAGE
+    if total_iterations < 20000:  # Stage 1: Base training
+        target_stage = 1
+        height_range = (default_height, default_height)  # Fixed at 0.33m (or robot's default)
+        roll_range = (0.0, 0.0)  # Fixed at 0°
+        pitch_range = (0.0, 0.0)  # Fixed at 0°
+        yaw_range = (0.0, 0.0)  # Fixed at 0°
+    elif total_iterations < 30000:  # Stage 2: Small range
+        target_stage = 2
+        height_range = (default_height - 0.03, default_height + 0.03)  # ±3cm
+        roll_range = (-0.14, 0.14)  # ±8° (0.14 rad)
+        pitch_range = (0.0, 0.0)  # Keep pitch fixed
+        yaw_range = (0.0, 0.0)  # Keep yaw fixed
+    elif total_iterations < 45000:  # Stage 3: Medium range
         target_stage = 3
-        height_range = (0.23, 0.43)  # ±10cm
-        roll_range = (-0.349, 0.349)  # ±20°
-        pitch_range = (-0.21, 0.21)  # ±12°
-        yaw_range = (-0.21, 0.21)  # ±12°
-    else:  # >= 15000, Stage 4: Maximum range
+        height_range = (default_height - 0.10, default_height + 0.10)  # ±10cm
+        roll_range = (-0.349, 0.349)  # ±20° (0.349 rad)
+        pitch_range = (-0.21, 0.21)  # ±12° (0.21 rad)
+        yaw_range = (-0.21, 0.21)  # ±12° (0.21 rad)
+    else:  # >= 45000, Stage 4: Maximum range
         target_stage = 4
-        height_range = (0.18, 0.48)  # ±15cm (maximum range)
-        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad)
+        height_range = (default_height - 0.15, default_height + 0.15)  # ±15cm (maximum range)
+        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad, 0.524 rad)
         pitch_range = (-0.262, 0.262)  # ±15°
         yaw_range = (-0.262, 0.262)  # ±15°
     

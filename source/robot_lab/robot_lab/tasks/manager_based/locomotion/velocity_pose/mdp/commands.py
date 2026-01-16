@@ -93,26 +93,6 @@ class UniformVelocityPoseCommand(velocity_mdp.UniformThresholdVelocityCommand):
                 len(env_ids), 1, device=self.device
             ) * (height_range[1] - height_range[0]) + height_range[0]
         
-    def _resample_command(self, env_ids: Sequence[int]):
-        """Resample velocity and pose commands.
-        
-        For curriculum learning, height and pose commands are set to default values initially.
-        """
-        # First resample velocity commands using parent class
-        super()._resample_command(env_ids)
-        
-        # Sample height command (initially using default height)
-        # For curriculum learning, we keep it at default
-        height_range = self.cfg.ranges.height
-        if height_range[0] == height_range[1]:
-            # Use default height when range is zero
-            self.height_command[env_ids] = self.default_height
-        else:
-            # Sample from range
-            self.height_command[env_ids] = torch.rand(
-                len(env_ids), 1, device=self.device
-            ) * (height_range[1] - height_range[0]) + height_range[0]
-        
         # Sample roll, pitch, yaw commands (initially set to zero for curriculum learning)
         # These are relative to Robot Point Frame B (Yaw-Aligned Frame)
         roll_range = self.cfg.ranges.roll
