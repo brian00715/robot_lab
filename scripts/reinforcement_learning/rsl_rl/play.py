@@ -118,15 +118,46 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.events.push_robot = None
     env_cfg.curriculum.command_levels_lin_vel = None
     env_cfg.curriculum.command_levels_ang_vel = None
+    
+    # Check if this is a VelocityPose task (has height/pose commands)
+    is_velocity_pose_task = hasattr(env_cfg.commands, "base_velocity_pose")
+    
+    if is_velocity_pose_task:
+        # For VelocityPose tasks, enable height/pose command ranges for play
+        # (they are set to 0 for curriculum learning during training)
+        print("[INFO] VelocityPose task detected - enabling height and pose command ranges")
+        import math
+        # Enable height command range (e.g., ±10cm around default)
+        if hasattr(env_cfg.commands.base_velocity_pose.ranges, "height"):
+            default_h = env_cfg.commands.base_velocity_pose.default_height
+            env_cfg.commands.base_velocity_pose.ranges.height = (default_h - 0.10, default_h + 0.10)
+            print(f"  Height range: [{default_h - 0.10:.2f}, {default_h + 0.10:.2f}]m")
+        # Enable roll command range (±20 degrees)
+        if hasattr(env_cfg.commands.base_velocity_pose.ranges, "roll"):
+            env_cfg.commands.base_velocity_pose.ranges.roll = (-0.349, 0.349)
+            print(f"  Roll range: ±20°")
+        # Enable pitch command range (±12 degrees)
+        if hasattr(env_cfg.commands.base_velocity_pose.ranges, "pitch"):
+            env_cfg.commands.base_velocity_pose.ranges.pitch = (-0.21, 0.21)
+            print(f"  Pitch range: ±12°")
+        # Yaw is intentionally kept at (0.0, 0.0) to decouple from localization
+        print(f"  Yaw: fixed at 0° (decoupled from localization)")
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
         env_cfg.terminations.time_out = None
-        env_cfg.commands.base_velocity.debug_vis = False
+        # Disable debug visualization for the appropriate command type
+        if is_velocity_pose_task:
+            env_cfg.commands.base_velocity_pose.debug_vis = False
+        else:
+            env_cfg.commands.base_velocity.debug_vis = False
+        
+        # Use the appropriate command ranges
+        cmd_cfg = env_cfg.commands.base_velocity_pose if is_velocity_pose_task else env_cfg.commands.base_velocity
         config = Se2KeyboardCfg(
-            v_x_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_x[1],
-            v_y_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_y[1],
-            omega_z_sensitivity=env_cfg.commands.base_velocity.ranges.ang_vel_z[1],
+            v_x_sensitivity=cmd_cfg.ranges.lin_vel_x[1],
+            v_y_sensitivity=cmd_cfg.ranges.lin_vel_y[1],
+            omega_z_sensitivity=cmd_cfg.ranges.ang_vel_z[1],
         )
         controller = Se2Keyboard(config)
         env_cfg.observations.policy.velocity_commands = ObsTerm(
