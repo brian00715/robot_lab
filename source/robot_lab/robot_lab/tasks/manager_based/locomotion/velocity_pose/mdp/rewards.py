@@ -123,14 +123,15 @@ def track_orientation_exp(
 ) -> torch.Tensor:
     """Reward tracking orientation command using quaternion-based error calculation in yaw-aligned frame.
     
+    MODIFIED: Yaw component is always fixed at 0 - only tracks roll and pitch.
+    
     Coordinate System Framework:
     - World Frame A: Fixed global reference (never changes)
     - Robot Point Frame B (Yaw-Aligned): Z-axis vertical, XY rotates with motion direction
     - Robot Base Frame C (Body): Fully follows base orientation (roll, pitch, yaw)
     
     This function tracks the orientation of Base Frame C relative to Point Frame B.
-    The command specifies [roll, pitch, yaw] angles that define the desired orientation
-    of Base Frame C when Point Frame B is used as the reference.
+    The command specifies [roll, pitch, 0] angles where yaw is always 0.
     
     Args:
         env: Environment instance
@@ -144,7 +145,7 @@ def track_orientation_exp(
         
     Design Intent:
         - Use quaternion math in yaw-aligned frame (Point Frame B)
-        - Supports full 3D orientation control (roll, pitch, yaw)
+        - Only tracks roll and pitch (yaw is always 0)
         - More accurate than angle decomposition (no coupling errors)
         - Exponential reward function for sensitivity to small errors
         
@@ -155,8 +156,8 @@ def track_orientation_exp(
         - Angle error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
         
     Implementation:
-        1. Extract target [roll, pitch, yaw] from 7D command (indices 4, 5, 6)
-        2. Convert to target quaternion in Point Frame B
+        1. Extract target [roll, pitch] from 7D command (indices 4, 5), yaw is always 0
+        2. Convert to target quaternion in Point Frame B with yaw=0
         3. Get current base quaternion in World Frame A
         4. Extract motion direction (yaw_motion) from World Frame A
         5. Project current quaternion to Point Frame B by removing motion direction
@@ -168,18 +169,18 @@ def track_orientation_exp(
     
     asset: RigidObject = env.scene[asset_cfg.name]
     
-    # Get target orientation command (indices 4, 5, 6 of 7D command: [vx, vy, ωz, h, roll, pitch, yaw])
+    # Get target orientation command (indices 4, 5 of 7D command: [vx, vy, ωz, h, roll, pitch, yaw])
     command = env.command_manager.get_command(command_name)
     target_roll = command[:, 4]   # (num_envs,) - Roll in Point Frame B
-    target_pitch = command[:, 5]  # (num_envs,) - Pitch in Point Frame B  
-    target_yaw = command[:, 6]    # (num_envs,) - Yaw in Point Frame B
+    target_pitch = command[:, 5]  # (num_envs,) - Pitch in Point Frame B
+    # MODIFIED: Yaw is always 0, ignore command[:, 6]
     
-    # Convert target [roll, pitch, yaw] to quaternion in Point Frame B
+    # Convert target [roll, pitch, 0] to quaternion in Point Frame B
     # Quaternion order: [w, x, y, z]
     target_quat = quat_from_euler_xyz(
         roll=target_roll,
         pitch=target_pitch,
-        yaw=target_yaw  # Now we include yaw in pose control
+        yaw=torch.zeros_like(target_roll)  # Force yaw = 0 always
     )  # (num_envs, 4)
     
     # Get current base quaternion in World Frame A
@@ -210,8 +211,7 @@ def track_orientation_exp(
     
     # Compute quaternion error in yaw-aligned frame: q_error = q_current^(-1) * q_target
     # This gives us the rotation needed to go from current to target orientation
-    # The magnitude of rotation angle is the same regardless of multiplication order,
-    # but this order is semantically clearer for future directional error analysis
+    # Since target yaw = 0, this only measures roll and pitch errors
     current_quat_inv = quat_conjugate(current_quat_yaw_aligned)
     quat_error = quat_mul(current_quat_inv, target_quat)  # (num_envs, 4)
     
@@ -248,9 +248,10 @@ def track_orientation_exp(
         
         stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
         print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}){stage_info}:")
+        print("  NOTE: Yaw is always fixed at 0 - only tracking roll and pitch")
         print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
         print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
-        print(f"  Target yaw (deg):              mean={torch.rad2deg(target_yaw).mean().item():.2f}, max={torch.rad2deg(target_yaw.abs()).max().item():.2f}")
+        print("  Target yaw (deg):              always 0.00 (fixed)")
         print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
         print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
         print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")

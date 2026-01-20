@@ -289,36 +289,36 @@ def command_curriculum_height_pose(
         print(f"  Current _curriculum_stage: {getattr(env, '_curriculum_stage', 'NOT SET')}")
     
     # Determine current stage based on total iterations
-    # ALL 4 STAGES ENABLED:
+    # ALL 4 STAGES ENABLED, BUT YAW IS ALWAYS FIXED AT 0:
     # Stage 1: 0-20,000 iterations (Base training with fixed pose)
-    # Stage 2: 20,000-30,000 iterations (Small range: ±3cm, ±8° roll)
-    # Stage 3: 30,000-45,000 iterations (Medium range: ±10cm, ±20° roll, ±12° pitch/yaw)
-    # Stage 4: 45,000+ iterations (Maximum range: ±15cm, ±30° roll, ±15° pitch/yaw)
+    # Stage 2: 20,000-30,000 iterations (Small range: ±3cm, ±8° roll, pitch=0, yaw=0)
+    # Stage 3: 30,000-45,000 iterations (Medium range: ±10cm, ±20° roll, ±12° pitch, yaw=0)
+    # Stage 4: 45,000+ iterations (Maximum range: ±15cm, ±30° roll, ±15° pitch, yaw=0)
     
     if total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
         height_range = (default_height, default_height)  # Fixed at 0.33m (or robot's default)
         roll_range = (0.0, 0.0)  # Fixed at 0°
         pitch_range = (0.0, 0.0)  # Fixed at 0°
-        yaw_range = (0.0, 0.0)  # Fixed at 0°
+        yaw_range = (0.0, 0.0)  # Fixed at 0° (always)
     elif total_iterations < 30000:  # Stage 2: Small range
         target_stage = 2
         height_range = (default_height - 0.03, default_height + 0.03)  # ±3cm
         roll_range = (-0.14, 0.14)  # ±8° (0.14 rad)
         pitch_range = (0.0, 0.0)  # Keep pitch fixed
-        yaw_range = (0.0, 0.0)  # Keep yaw fixed
+        yaw_range = (0.0, 0.0)  # Keep yaw fixed (always)
     elif total_iterations < 45000:  # Stage 3: Medium range
         target_stage = 3
         height_range = (default_height - 0.10, default_height + 0.10)  # ±10cm
         roll_range = (-0.349, 0.349)  # ±20° (0.349 rad)
         pitch_range = (-0.21, 0.21)  # ±12° (0.21 rad)
-        yaw_range = (-0.21, 0.21)  # ±12° (0.21 rad)
+        yaw_range = (0.0, 0.0)  # MODIFIED: Keep yaw fixed at 0° (always)
     else:  # >= 45000, Stage 4: Maximum range
         target_stage = 4
         height_range = (default_height - 0.15, default_height + 0.15)  # ±15cm (maximum range)
         roll_range = (-0.524, 0.524)  # ±30° (π/6 rad, 0.524 rad)
         pitch_range = (-0.262, 0.262)  # ±15°
-        yaw_range = (-0.262, 0.262)  # ±15°
+        yaw_range = (0.0, 0.0)  # MODIFIED: Keep yaw fixed at 0° (always)
     
     # Initialize curriculum state on first call, using the target_stage we just determined
     if not hasattr(env, "_curriculum_stage"):

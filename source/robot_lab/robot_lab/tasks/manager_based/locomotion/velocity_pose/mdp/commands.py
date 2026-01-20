@@ -97,7 +97,7 @@ class UniformVelocityPoseCommand(velocity_mdp.UniformThresholdVelocityCommand):
         # These are relative to Robot Point Frame B (Yaw-Aligned Frame)
         roll_range = self.cfg.ranges.roll
         pitch_range = self.cfg.ranges.pitch
-        yaw_range = self.cfg.ranges.yaw
+        # yaw_range is no longer used - yaw is always fixed at 0
         
         if roll_range[0] == roll_range[1]:
             self.pose_command[env_ids, 0] = 0.0  # Default roll = 0
@@ -113,12 +113,9 @@ class UniformVelocityPoseCommand(velocity_mdp.UniformThresholdVelocityCommand):
                 len(env_ids), device=self.device
             ) * (pitch_range[1] - pitch_range[0]) + pitch_range[0]
         
-        if yaw_range[0] == yaw_range[1]:
-            self.pose_command[env_ids, 2] = 0.0  # Default yaw = 0
-        else:
-            self.pose_command[env_ids, 2] = torch.rand(
-                len(env_ids), device=self.device
-            ) * (yaw_range[1] - yaw_range[0]) + yaw_range[0]
+        # MODIFIED: Always keep yaw = 0 regardless of range settings
+        # Yaw control is disabled - Base Frame C yaw always aligned with Point Frame B
+        self.pose_command[env_ids, 2] = 0.0  # Force yaw = 0 always
 
     def _update_metrics(self):
         """Update metrics for the command generator."""

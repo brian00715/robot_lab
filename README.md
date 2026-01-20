@@ -469,3 +469,7 @@ cd /home/yzy/robot_lab && python scripts/reinforcement_learning/rsl_rl/train.py 
     --load_run=logs/rsl_rl/unitree_go2_velocity_pose_flat/2026-01-15_08-52-07 \
     --checkpoint=model_25800.pt \
     --headless
+
+
+Play
+cd /home/yzy/robot_lab && python scripts/reinforcement_learning/rsl_rl/play.py     --task=RobotLab-Isaac-VelocityPose-Flat-Unitree-Go2-v0     --num_envs=4     --checkpoint=logs/rsl_rl/unitree_go2_velocity_pose_flat/2026-01-15_20-32-29/model_64600.pt
