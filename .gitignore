@@ -38,3 +38,5 @@ _build
 
 # LSP
 pyrightconfig.json
+
+.vscode

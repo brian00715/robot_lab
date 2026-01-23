@@ -21,19 +21,32 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         super().__post_init__()
 
         # ------------------------------Command Ranges for Inference------------------------------
-        # Adjust height range: 0.20-0.46m (Go2 default is 0.35m)
-        # Adjust roll range: ±30 degrees (±0.524 radians)
+        # Match Stage 4 training ranges for consistent behavior
+        # Stage 4: default_height ± 15cm, roll ± 30°, pitch ± 15°, yaw = 0
         import math
-        self.commands.base_velocity_pose.ranges.height = (0.20, 0.46)
-        self.commands.base_velocity_pose.ranges.roll = (-math.pi/6, math.pi/6)  # ±30°
-        # Keep default height at 0.35m (middle of range)
-        self.commands.base_velocity_pose.default_height = 0.35
         
-        # RE-ENABLE curriculum for training (needed for Stage 1 reward disabling)
-        # Curriculum will control command ranges and enable/disable pose rewards during training
-        # Note: For inference/testing, you can disable curriculum after training is complete
-        # self.curriculum.command_curriculum_height_pose = None  # <-- Commented out for training
-        print("[Config] Curriculum enabled for flat terrain training (Stage 1-4)")
+        # Get default height (usually 0.35m for Go2)
+        default_height = self.commands.base_velocity_pose.default_height
+        
+        # Set ranges to match Stage 4 (maximum training difficulty)
+        self.commands.base_velocity_pose.ranges.height = (
+            default_height - 0.15,  # -15cm
+            default_height + 0.15   # +15cm
+        )  # For Go2 (default=0.35m): 0.20m to 0.50m
+        self.commands.base_velocity_pose.ranges.roll = (-0.524, 0.524)  # ±30° (π/6 rad)
+        self.commands.base_velocity_pose.ranges.pitch = (-0.262, 0.262)  # ±15°
+        self.commands.base_velocity_pose.ranges.yaw = (0.0, 0.0)  # Fixed at 0° (always)
+        
+        print(f"[Config] Inference command ranges set to match Stage 4:")
+        print(f"  Height: [{default_height - 0.15:.2f}, {default_height + 0.15:.2f}] m (±15cm)")
+        print(f"  Roll:   ±{math.degrees(0.524):.1f}° (±30°)")
+        print(f"  Pitch:  ±{math.degrees(0.262):.1f}° (±15°)")
+        print(f"  Yaw:    0° (fixed)")
+        
+        # IMPORTANT: Keep curriculum enabled for inference to ensure correct reward weights
+        # The curriculum will initialize to Stage 4 (maximum difficulty) in inference mode
+        # self.curriculum.command_curriculum_height_pose = None  # REMOVED - keep curriculum active
+        print("[Config] Curriculum ENABLED for flat terrain - reward weights will match training Stage 4")
 
         # ------------------------------Terrain and Sensors------------------------------
         # Change terrain to flat
@@ -52,8 +65,7 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         # curriculum.command_curriculum_height_pose is kept from parent config
         
         # ------------------------------Disable VelocityPose-specific Rewards for Stage 1------------------------------
-        # Stage 1 (0-14,500): These rewards are disabled for basic training
-        # Stage 2+ (14,500+): Will be automatically enabled by curriculum
+
         
         # Height tracking reward - will be enabled in Stage 2
         if hasattr(self.rewards, "track_height_exp"):

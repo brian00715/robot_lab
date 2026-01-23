@@ -79,10 +79,11 @@ def track_height_exp(
     # Calculate absolute height error (more sensitive to small errors)
     height_error_abs = torch.abs(target_height - current_height)
     
-    # Use exponential growth reward: smaller error -> exponentially higher reward
-    # reward = exp(-|error|/std) where std controls sensitivity
-    # When error=0: reward=1.0, When error=std: reward≈0.37
-    reward = torch.exp(-height_error_abs / std)
+    # Use exponential growth reward with SQUARED error: smaller error -> exponentially higher reward
+    # reward = exp(-error²/std²) where std controls sensitivity
+    # This makes the reward more sensitive to errors than linear exp(-error/std)
+    # When error=0: reward=1.0, When error=std: reward≈0.37, When error=2*std: reward≈0.02
+    reward = torch.exp(-torch.square(height_error_abs / std))
     
     # Only give reward when robot is upright (avoid rewarding when fallen)
     # projected_gravity_b[:, 2] is close to -1 when upright
@@ -109,7 +110,7 @@ def track_height_exp(
         print(f"  Height error (abs):           mean={height_error_abs.mean().item():.4f}, max={height_error_abs.max().item():.4f}")
         print(f"  projected_gravity[:, 2] (gz): mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
         print(f"  Upright factor:               mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
-        print(f"  Raw reward (before upright):  mean={torch.exp(-height_error_abs / std).mean().item():.6f}")
+        print(f"  Raw reward (before upright):  mean={torch.exp(-torch.square(height_error_abs / std)).mean().item():.6f}")
         print(f"  Final reward (after upright): mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
@@ -221,9 +222,11 @@ def track_orientation_exp(
     quat_w = torch.clamp(quat_error[:, 0], -1.0, 1.0)
     angle_error = 2.0 * torch.acos(torch.abs(quat_w))  # (num_envs,)
     
-    # Use exponential growth reward: smaller error -> exponentially higher reward
-    # reward = exp(-|error|/std) where std controls sensitivity
-    reward = torch.exp(-angle_error / std)
+    # Use exponential growth reward with SQUARED error: smaller error -> exponentially higher reward
+    # reward = exp(-error²/std²) where std controls sensitivity
+    # This makes the reward more sensitive to errors than linear exp(-error/std)
+    # When error=0: reward=1.0, When error=std: reward≈0.37, When error=2*std: reward≈0.02
+    reward = torch.exp(-torch.square(angle_error / std))
     
     # Only give reward when robot is upright
     projected_gravity = asset.data.projected_gravity_b

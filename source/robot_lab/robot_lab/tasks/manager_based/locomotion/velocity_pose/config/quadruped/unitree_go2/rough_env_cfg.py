@@ -183,11 +183,11 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # New: Height tracking reward with exponential growth
         # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
         # Initial values are placeholders - curriculum will override based on stage:
-        #   Stage 3 (0-15k): weight=3.0, std=sqrt(0.05)≈0.22m
-        #   Stage 4 (15k+):  weight=4.0, std=sqrt(0.05)≈0.22m
+        #   Stage 3 (0-15k): weight=4.5, std=sqrt(0.05)≈0.22m (increased from 3.0 to 4.5, 1.5x)
+        #   Stage 4 (15k+):  weight=6.0, std=sqrt(0.05)≈0.22m (increased from 4.0 to 6.0, 1.5x)
         self.rewards.track_height_exp = RewTerm(
             func=mdp.track_height_exp,
-            weight=2.0,  # Placeholder - will be updated by curriculum
+            weight=3.0,  # Increased from 2.0 (1.5x) - Placeholder, will be updated by curriculum
             params={
                 "command_name": "base_velocity_pose",
                 "std": math.sqrt(0.25),  # Placeholder - will be updated by curriculum
@@ -210,7 +210,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         )
 
         # Others
-        self.rewards.feet_air_time.weight = 0.1
+        self.rewards.feet_air_time.weight = 0.2  # Increased from 0.1 (2x)
         self.rewards.feet_air_time.params["threshold"] = 0.5
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_air_time_variance.weight = -1.0

@@ -1,22 +1,6 @@
 # Copyright (c) 2024-2025 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
-"""Curriculum learning functions for VelocityPose task with stage-based progression.
-
-This module implements a fixed-iteration stage-based curriculum:
-NOTE: Stage 1 is SKIPPED - Training starts directly from Stage 2
-
-- Stage 2 (0-10,000 iterations): Small range - Height and pose commands with limited variation (±3cm height, ±8° roll, pitch=0°, yaw=0°)
-- Stage 3 (10,000-25,000 iterations): Medium range for height and pose commands (±10cm height, ±20° roll, ±12° pitch, ±12° yaw)
-- Stage 4 (25,000+ iterations): Large range for height and pose commands (±15cm height, ±30° roll, ±15° pitch, ±15° yaw)
-
-The curriculum automatically tracks total iterations across training sessions,
-so --resume will correctly continue from the accumulated iteration count.
-
-ORIGINAL Stage 1 (COMMENTED OUT):
-- Stage 1 (0-20,000 iterations): Base training - Height and pose commands fixed at default (roll=0°, pitch=0°, yaw=0°, height=0.33m)
-  This stage focused on basic locomotion without pose control, but is now skipped to accelerate training.
-"""
 
 from __future__ import annotations
 
@@ -34,14 +18,16 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     Stage-based reward parameter progression:
     - Stage 1 (0-20k): Rewards DISABLED for pure locomotion learning
       * Height/Orientation rewards weight = 0.0
+      * ENABLE z-axis velocity and xy angular velocity penalties for stability
     - Stage 2 (20k-30k): Relaxed parameters (easier to learn)
-      * Height: std=0.5m, weight=2.0
+      * Height: std=0.5m, weight=3.0 (increased from 2.0, 1.5x)
       * Orientation: std=0.707rad (40°), weight=1.0
+      * DISABLE stability penalties (allow pose variation)
     - Stage 3 (30k-45k): Strict parameters + increased weight
-      * Height: std=0.22m, weight=3.0
+      * Height: std=0.22m, weight=4.5 (increased from 3.0, 1.5x)
       * Orientation: std=0.316rad (18°), weight=1.5
     - Stage 4 (45k+): Very strict parameters + high weight
-      * Height: std=0.22m, weight=4.0
+      * Height: std=0.22m, weight=6.0 (increased from 4.0, 1.5x)
       * Orientation: std=0.316rad (18°), weight=2.0
     """
     import math
@@ -50,47 +36,96 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     try:
         height_reward_cfg = env.reward_manager.get_term_cfg("track_height_exp")
         orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
-    except (AttributeError, KeyError):
+    except (AttributeError, KeyError, ValueError):
         # Rewards not configured, skip update
-        return
+        height_reward_cfg = None
+        orient_reward_cfg = None
     
-    # Stage 1: DISABLE height/orientation rewards for pure locomotion learning
+    # Try to get stability penalty terms
+    try:
+        lin_vel_z_penalty_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
+    except (AttributeError, KeyError, ValueError):
+        lin_vel_z_penalty_cfg = None
+    
+    try:
+        ang_vel_xy_penalty_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
+    except (AttributeError, KeyError, ValueError):
+        ang_vel_xy_penalty_cfg = None
+    
+    # Stage 1: DISABLE height/orientation rewards, ENABLE stability penalties
     if stage == 1:
-        height_reward_cfg.weight = 0.0  # Completely disabled
-        orient_reward_cfg.weight = 0.0  # Completely disabled
-        # std doesn't matter when weight=0, but set to relaxed values
-        height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
-        orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+        if height_reward_cfg:
+            height_reward_cfg.weight = 0.0  # Completely disabled
+            # std doesn't matter when weight=0, but set to relaxed values
+            height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
+        
+        if orient_reward_cfg:
+            orient_reward_cfg.weight = 0.0  # Completely disabled
+            orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+        
+        # ENABLE stability penalties for Stage 1
+        if lin_vel_z_penalty_cfg:
+            lin_vel_z_penalty_cfg.weight = -2.0  # Strong penalty for z-axis motion
+        
+        if ang_vel_xy_penalty_cfg:
+            ang_vel_xy_penalty_cfg.weight = -0.1  # Strong penalty for roll/pitch rotation
     
-    # Stage 2: Relaxed tracking (easier to learn)
+    # Stage 2: Relaxed tracking (easier to learn), DISABLE stability penalties
     elif stage == 2:
         # Height tracking: relaxed tolerance, moderate weight
-        height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
-        height_reward_cfg.weight = 2.0  # Moderate weight
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.25)  # std ≈ 0.5m
+            height_reward_cfg.weight = 3.0  # Increased from 2.0 (1.5x)
         
         # Orientation tracking: relaxed tolerance, moderate weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
-        orient_reward_cfg.weight = 1.0  # Moderate weight
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+            orient_reward_cfg.weight = 1.0  # Moderate weight
+        
+        # DISABLE stability penalties for Stage 2+ (allow pose variation)
+        if lin_vel_z_penalty_cfg:
+            lin_vel_z_penalty_cfg.weight = 0.0  # Disabled
+        
+        if ang_vel_xy_penalty_cfg:
+            ang_vel_xy_penalty_cfg.weight = 0.0  # Disabled
     
     # Stage 3: Strict tracking with increased weight
     elif stage == 3:
         # Height tracking: strict tolerance, increased weight
-        height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
-        height_reward_cfg.weight = 3.0  # Increased from 2.0
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
+            height_reward_cfg.weight = 4.5  # Increased from 3.0 (1.5x)
         
         # Orientation tracking: strict tolerance, increased weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
-        orient_reward_cfg.weight = 1.5  # Increased from 1.0
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
+            orient_reward_cfg.weight = 1.5  # Increased from 1.0
+        
+        # Keep stability penalties disabled
+        if lin_vel_z_penalty_cfg:
+            lin_vel_z_penalty_cfg.weight = 0.0  # Disabled
+        
+        if ang_vel_xy_penalty_cfg:
+            ang_vel_xy_penalty_cfg.weight = 0.0  # Disabled
     
     # Stage 4: Very strict tracking with high weight
     elif stage == 4:
         # Height tracking: very strict tolerance, high weight
-        height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m (same as Stage 3)
-        height_reward_cfg.weight = 4.0  # Further increased
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m (same as Stage 3)
+            height_reward_cfg.weight = 6.0  # Increased from 4.0 (1.5x)
         
         # Orientation tracking: very strict tolerance, high weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (same as Stage 3)
-        orient_reward_cfg.weight = 2.0  # Further increased
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (same as Stage 3)
+            orient_reward_cfg.weight = 2.0  # Further increased
+        
+        # Keep stability penalties disabled
+        if lin_vel_z_penalty_cfg:
+            lin_vel_z_penalty_cfg.weight = 0.0  # Disabled
+        
+        if ang_vel_xy_penalty_cfg:
+            ang_vel_xy_penalty_cfg.weight = 0.0  # Disabled
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
@@ -109,8 +144,23 @@ def _print_reward_parameters(env: ManagerBasedRLEnv):
         print(f"  Reward Parameters:")
         print(f"    track_height_exp:       weight={height_weight:.1f}, std={height_std:.3f} ({height_std:.2f}m)")
         print(f"    track_orientation_exp:  weight={orient_weight:.1f}, std={orient_std:.3f} ({math.degrees(orient_std):.1f}°)")
-    except (AttributeError, KeyError):
+    except (AttributeError, KeyError, ValueError):
         print(f"  Reward Parameters: Not available (rewards not configured)")
+    
+    # Print stability penalty parameters
+    try:
+        lin_vel_z_penalty_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
+        lin_vel_z_weight = lin_vel_z_penalty_cfg.weight
+        print(f"    lin_vel_z_l2:           weight={lin_vel_z_weight:.2f} {'[ENABLED]' if lin_vel_z_weight != 0.0 else '[DISABLED]'}")
+    except (AttributeError, KeyError, ValueError):
+        pass
+    
+    try:
+        ang_vel_xy_penalty_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
+        ang_vel_xy_weight = ang_vel_xy_penalty_cfg.weight
+        print(f"    ang_vel_xy_l2:          weight={ang_vel_xy_weight:.2f} {'[ENABLED]' if ang_vel_xy_weight != 0.0 else '[DISABLED]'}")
+    except (AttributeError, KeyError, ValueError):
+        pass
 
 
 def terrain_levels_velocity_pose(
@@ -166,56 +216,7 @@ def command_curriculum_height_pose(
     env_ids: Sequence[int],
     command_name: str = "base_velocity_pose",
 ) -> torch.Tensor:
-    """Stage-based curriculum for height and pose commands with fixed iteration thresholds.
-    
-    This curriculum implements a 3-stage progression based on total training iterations:
-    NOTE: Stage 1 is SKIPPED - Training starts directly from Stage 2
-    
-    Stage 2 (0-10,000 iterations):
-        - Small range introduction
-        - Height range: [0.30m, 0.36m] (±3cm from default 0.33m)
-        - Roll range: [-8°, +8°] (±0.14 rad)
-        - Pitch: 0° (keep fixed)
-        - Yaw: 0° (keep fixed)
-        - Focus: Start learning height and roll control
-        - Duration: 10,000 iterations
-    
-    Stage 3 (10,000-25,000 iterations):
-        - Medium range expansion
-        - Height range: [0.23m, 0.43m] (±10cm)
-        - Roll range: [-20°, +20°] (±0.349 rad)
-        - Pitch range: [-12°, +12°] (±0.21 rad)
-        - Yaw range: [-12°, +12°] (±0.21 rad)
-        - Focus: Learn medium-range pose control with pitch and yaw
-        - Duration: 15,000 iterations
-    
-    Stage 4 (25,000+ iterations):
-        - Maximum range mastery
-        - Height range: [0.18m, 0.48m] (±15cm, maximum range)
-        - Roll range: [-30°, +30°] (±0.524 rad, π/6)
-        - Pitch range: [-15°, +15°] (±0.262 rad)
-        - Yaw range: [-15°, +15°] (±0.262 rad)
-        - Focus: Master full pose control at maximum safe limits
-        - Duration: Open-ended (continue until performance plateaus)
-    
-    ORIGINAL Stage 1 (NOW COMMENTED OUT):
-        - Stage 1 (0-20,000 iterations): Base training phase
-        - Height: 0.33m (fixed at default, ±0cm)
-        - Roll: 0° (fixed), Pitch: 0° (fixed), Yaw: 0° (fixed)
-        - Focus: Learn basic locomotion without pose control
-        - This stage is now skipped to accelerate training
-    
-    The curriculum automatically handles --resume by tracking env.common_step_counter,
-    which persists across training sessions.
-    
-    Args:
-        env: The RL environment instance
-        env_ids: Environment IDs to update (not used, curriculum is global)
-        command_name: Name of the command term (default: "base_velocity_pose")
-    
-    Returns:
-        Current stage number as a tensor for logging (2, 3, or 4)
-    """
+   
     # Get command manager ranges
     command_term = env.command_manager.get_term(command_name)
     ranges = command_term.cfg.ranges
@@ -295,7 +296,21 @@ def command_curriculum_height_pose(
     # Stage 3: 30,000-45,000 iterations (Medium range: ±10cm, ±20° roll, ±12° pitch, yaw=0)
     # Stage 4: 45,000+ iterations (Maximum range: ±15cm, ±30° roll, ±15° pitch, yaw=0)
     
-    if total_iterations < 20000:  # Stage 1: Base training
+    # Special handling for inference mode: Use Stage 4 (maximum difficulty)
+    # Inference mode is detected when total_iterations == 0 AND terrain is flat
+    is_inference_mode = (total_iterations == 0 and 
+                        hasattr(env.scene, 'terrain') and 
+                        hasattr(env.scene.terrain.cfg, 'terrain_type') and
+                        env.scene.terrain.cfg.terrain_type == "plane")
+    
+    if is_inference_mode:
+        # Force Stage 4 for inference to match training checkpoint behavior
+        target_stage = 4
+        height_range = (default_height - 0.15, default_height + 0.15)  # ±15cm
+        roll_range = (-0.524, 0.524)  # ±30°
+        pitch_range = (-0.262, 0.262)  # ±15°
+        yaw_range = (0.0, 0.0)  # Fixed at 0°
+    elif total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
         height_range = (default_height, default_height)  # Fixed at 0.33m (or robot's default)
         roll_range = (0.0, 0.0)  # Fixed at 0°
@@ -336,7 +351,12 @@ def command_curriculum_height_pose(
         
         print(f"\n{'='*80}")
         print(f"[Curriculum] Initialized at iteration {total_iterations}")
-        print(f"  Starting Stage: {target_stage} (Stage 1 and 2 SKIPPED, starting from Stage 3)")
+        if is_inference_mode:
+            print(f"  Mode: INFERENCE (flat terrain detected)")
+            print(f"  Starting Stage: {target_stage} (Stage 4 - Maximum Difficulty)")
+        else:
+            print(f"  Mode: TRAINING")
+            print(f"  Starting Stage: {target_stage} (Stage 1 and 2 SKIPPED, starting from Stage 3)")
         print(f"  Height Range: [{height_range[0]:.3f}, {height_range[1]:.3f}] m")
         print(f"  Roll Range:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
         print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")

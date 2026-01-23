@@ -127,16 +127,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # (they are set to 0 for curriculum learning during training)
         print("[INFO] VelocityPose task detected - enabling height and pose command ranges")
         import math
-        # Enable height command range (e.g., ±10cm around default)
         if hasattr(env_cfg.commands.base_velocity_pose.ranges, "height"):
             default_h = env_cfg.commands.base_velocity_pose.default_height
-            env_cfg.commands.base_velocity_pose.ranges.height = (default_h - 0.10, default_h + 0.10)
-            print(f"  Height range: [{default_h - 0.10:.2f}, {default_h + 0.10:.2f}]m")
-        # Enable roll command range (±20 degrees)
+            env_cfg.commands.base_velocity_pose.ranges.height = (default_h - 0.15, default_h + 0.15)
+            print(f"  Height range: [{default_h - 0.15:.2f}, {default_h + 0.15:.2f}]m")
         if hasattr(env_cfg.commands.base_velocity_pose.ranges, "roll"):
             env_cfg.commands.base_velocity_pose.ranges.roll = (-0.349, 0.349)
             print(f"  Roll range: ±20°")
-        # Enable pitch command range (±12 degrees)
         if hasattr(env_cfg.commands.base_velocity_pose.ranges, "pitch"):
             env_cfg.commands.base_velocity_pose.ranges.pitch = (-0.21, 0.21)
             print(f"  Pitch range: ±12°")
