@@ -202,6 +202,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+    
+    # CURRICULUM FIX: Patch environment to track RSL-RL iteration
+    # Store reference to runner in environment for curriculum access
+    env.unwrapped._rsl_rl_runner = runner  # type: ignore[attr-defined]
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint

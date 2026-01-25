@@ -93,30 +93,8 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # General
         self.rewards.is_terminated.weight = 0
 
-        # Remove conflicting Root penalties, replace with command-aware versions
-        # First set weight to 0 before setting to None (for disable_zero_weight_rewards)
-        self.rewards.lin_vel_z_l2.weight = 0  # Will be replaced by conditional version
-        self.rewards.ang_vel_xy_l2.weight = 0  # Will be replaced by conditional version
-        
-        # New: Conditional vertical velocity penalty (only penalize when height command is close to default)
-        self.rewards.lin_vel_z_penalty_conditional = RewTerm(
-            func=mdp.lin_vel_z_penalty_conditional,
-            weight=-2.0,
-            params={
-                "command_name": "base_velocity_pose",
-                "height_threshold": 0.02,  # 2cm tolerance
-            }
-        )
-        
-        # New: Conditional angular velocity penalty (only penalize when target orientation is close to zero)
-        self.rewards.ang_vel_xy_penalty_conditional = RewTerm(
-            func=mdp.ang_vel_xy_penalty_conditional,
-            weight=-0.05,  
-            params={
-                "command_name": "base_velocity_pose",
-                "angle_threshold": 0.05,  # About 2.86 degrees - when target roll/pitch angles are below this, penalize angular velocity
-            }
-        )
+        self.rewards.lin_vel_z_l2.weight = -0.0001  # Placeholder, controlled by curriculum
+        self.rewards.ang_vel_xy_l2.weight = -0.0001  # Placeholder, controlled by curriculum
         
         # Keep disabled rewards
         self.rewards.flat_orientation_l2.weight = 0

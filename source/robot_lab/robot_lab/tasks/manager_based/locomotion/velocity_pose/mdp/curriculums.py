@@ -28,8 +28,8 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     """Update reward parameters (std and weight) based on curriculum stage.
     
     Stage-based reward parameter progression:
-    - Stage 1: Rewards disabled for pure locomotion
-    - Stage 2: Relaxed parameters (std_height=0.5m, std_orient=0.707rad)
+    - Stage 1: Pose tracking disabled, locomotion penalties enabled (lin_vel_z, ang_vel_xy)
+    - Stage 2: Pose tracking with relaxed tolerance, locomotion penalties disabled
     - Stage 3: Strict parameters + increased weight
       * Height: std=0.22m, weight=3.0
       * Orientation: std=0.316rad (18°), weight=1.5
@@ -39,68 +39,130 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     """
     import math
     
-    # Try to get reward terms (may not exist in all environments)
+    # Try to get pose tracking reward terms (may not exist in all environments)
     try:
         height_reward_cfg = env.reward_manager.get_term_cfg("track_height_exp")
         orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
     except (AttributeError, KeyError):
-        # Rewards not configured, skip update
-        return
+        height_reward_cfg = None
+        orient_reward_cfg = None
     
-    # Stage 1: Disable pose tracking rewards (focus on locomotion only)
+    # Try to get locomotion penalty terms
+    try:
+        lin_vel_z_l2_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
+    except (AttributeError, KeyError):
+        lin_vel_z_l2_cfg = None
+    
+    try:
+        ang_vel_xy_l2_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
+    except (AttributeError, KeyError):
+        ang_vel_xy_l2_cfg = None
+    
+    # Stage 1: Disable pose tracking rewards, enable locomotion penalties
     if stage == 1:
-        height_reward_cfg.weight = 0.0
-        orient_reward_cfg.weight = 0.0
+        if height_reward_cfg:
+            height_reward_cfg.weight = 0.0
+        if orient_reward_cfg:
+            orient_reward_cfg.weight = 0.0
+        
+        # Enable locomotion penalties in Stage 1 only
+        if lin_vel_z_l2_cfg:
+            lin_vel_z_l2_cfg.weight = -2.0  # Penalize vertical velocity
+        if ang_vel_xy_l2_cfg:
+            ang_vel_xy_l2_cfg.weight = -0.05  # Penalize roll/pitch velocity
     
-    # Stage 2: Enable with relaxed tolerance
+    # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties
     elif stage == 2:
         # Height tracking: relaxed tolerance, low weight
-        height_reward_cfg.params["std"] = math.sqrt(0.25)  # std = 0.5m (very relaxed)
-        height_reward_cfg.weight = 1.0  # Low weight
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.25)  # std = 0.5m (very relaxed)
+            height_reward_cfg.weight = 1.0  # Low weight
         
         # Orientation tracking: relaxed tolerance, low weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
-        orient_reward_cfg.weight = 0.5  # Low weight
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
+            orient_reward_cfg.weight = 0.5  # Low weight
+        
+        # Disable locomotion penalties from Stage 2 onwards
+        if lin_vel_z_l2_cfg:
+            lin_vel_z_l2_cfg.weight = 0.0
+        if ang_vel_xy_l2_cfg:
+            ang_vel_xy_l2_cfg.weight = 0.0
     
-    # Stage 3: Strict tracking with increased weight
+    # Stage 3: Strict tracking with increased weight, locomotion penalties remain disabled
     elif stage == 3:
         # Height tracking: strict tolerance, moderate weight
-        height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
-        height_reward_cfg.weight = 3.0  # Increased from 2.0
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
+            height_reward_cfg.weight = 3.0  # Increased from 2.0
         
         # Orientation tracking: strict tolerance, moderate weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
-        orient_reward_cfg.weight = 1.5  # Increased from 1.0
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
+            orient_reward_cfg.weight = 1.5  # Increased from 1.0
+        
+        # Keep locomotion penalties disabled
+        if lin_vel_z_l2_cfg:
+            lin_vel_z_l2_cfg.weight = 0.0
+        if ang_vel_xy_l2_cfg:
+            ang_vel_xy_l2_cfg.weight = 0.0
     
-    # Stage 4: Very strict tracking with high weight
+    # Stage 4: Very strict tracking with high weight, locomotion penalties remain disabled
     elif stage == 4:
         # Height tracking: very strict tolerance, high weight
-        height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m (same as Stage 3)
-        height_reward_cfg.weight = 4.0  # Further increased
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m (same as Stage 3)
+            height_reward_cfg.weight = 4.0  # Further increased
         
         # Orientation tracking: very strict tolerance, high weight
-        orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (same as Stage 3)
-        orient_reward_cfg.weight = 2.0  # Further increased
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (same as Stage 3)
+            orient_reward_cfg.weight = 2.0  # Further increased
+        
+        # Keep locomotion penalties disabled
+        if lin_vel_z_l2_cfg:
+            lin_vel_z_l2_cfg.weight = 0.0
+        if ang_vel_xy_l2_cfg:
+            ang_vel_xy_l2_cfg.weight = 0.0
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
     """Print current reward parameters for debugging."""
     import math
     
+    print("  Reward Parameters:")
+    
+    # Print pose tracking rewards
     try:
         height_reward_cfg = env.reward_manager.get_term_cfg("track_height_exp")
-        orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
-        
         height_std = height_reward_cfg.params.get("std", 0.0)
         height_weight = height_reward_cfg.weight
+        print(f"    track_height_exp:       weight={height_weight:.1f}, std={height_std:.3f} ({height_std:.2f}m)")
+    except (AttributeError, KeyError):
+        print("    track_height_exp:       Not configured")
+    
+    try:
+        orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
         orient_std = orient_reward_cfg.params.get("std", 0.0)
         orient_weight = orient_reward_cfg.weight
-        
-        print("  Reward Parameters:")
-        print(f"    track_height_exp:       weight={height_weight:.1f}, std={height_std:.3f} ({height_std:.2f}m)")
         print(f"    track_orientation_exp:  weight={orient_weight:.1f}, std={orient_std:.3f} ({math.degrees(orient_std):.1f}°)")
     except (AttributeError, KeyError):
-        print("  Reward Parameters: Not available (rewards not configured)")
+        print("    track_orientation_exp:  Not configured")
+    
+    # Print locomotion penalty rewards
+    try:
+        lin_vel_z_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
+        lin_vel_z_weight = lin_vel_z_cfg.weight
+        print(f"    lin_vel_z_l2:           weight={lin_vel_z_weight:.2f}")
+    except (AttributeError, KeyError):
+        print("    lin_vel_z_l2:           Not configured")
+    
+    try:
+        ang_vel_xy_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
+        ang_vel_xy_weight = ang_vel_xy_cfg.weight
+        print(f"    ang_vel_xy_l2:          weight={ang_vel_xy_weight:.2f}")
+    except (AttributeError, KeyError):
+        print("    ang_vel_xy_l2:          Not configured")
 
 
 def terrain_levels_velocity_pose(
@@ -224,12 +286,34 @@ def command_curriculum_height_pose(
         # Manually injected by a wrapper (most reliable)
         total_iterations = env._curriculum_manual_iteration  # type: ignore
         iteration_source = "manual_injection"
-    else:
-        # Calculate from step counter (will be wrong after --resume, but it's all we have)
-        total_steps = env.common_step_counter  
-        steps_per_iteration = env.num_envs
+    elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, '_rsl_rl_runner'):
+        # Get iteration from RSL-RL runner (injected by train.py)
+        runner = env.unwrapped._rsl_rl_runner  # type: ignore
+        if hasattr(runner, 'current_learning_iteration'):
+            total_iterations = runner.current_learning_iteration
+            iteration_source = "rsl_rl_runner"
+        else:
+            # Fallback to calculation
+            total_steps = env.common_step_counter
+            steps_per_iteration = env.num_envs * 24
+            total_iterations = total_steps // steps_per_iteration
+            iteration_source = "rsl_rl_fallback"
+    elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, '_current_iteration'):
+        # Check if the environment tracks current iteration
+        total_iterations = env.unwrapped._current_iteration  # type: ignore
+        iteration_source = "env_tracked_iteration"
+    elif hasattr(env.unwrapped, 'episode_length_buf'):
+        # Calculate from episode counter (for RSL-RL)
+        total_steps = env.common_step_counter
+        steps_per_iteration = env.num_envs * 24  # RSL-RL default: 24 steps per env per iteration
         total_iterations = total_steps // steps_per_iteration
-        iteration_source = "step_counter"
+        iteration_source = "rsl_rl_calculation"
+    else:
+        # Last resort fallback
+        total_steps = env.common_step_counter  
+        steps_per_iteration = env.num_envs * 24  # Assume RSL-RL default
+        total_iterations = total_steps // steps_per_iteration
+        iteration_source = "fallback_calculation"
         
         # WORKAROUND: If we detect we're likely resumed (curriculum stage doesn't match iteration),
         # try to infer the correct iteration from TensorBoard logged metrics
