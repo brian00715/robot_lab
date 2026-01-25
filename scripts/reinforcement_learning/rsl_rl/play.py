@@ -173,6 +173,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    
+    # Mark as inference mode for curriculum (no runner injection)
+    # This tells curriculum to use Stage 4 (maximum range) for full capability
+    env.unwrapped._is_inference_mode = True  # type: ignore[attr-defined]
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model

@@ -369,7 +369,31 @@ def command_curriculum_height_pose(
     # Stage 3: 30,000-45,000 (Medium range)
     # Stage 4: 45,000+ (Maximum range)
     
-    if total_iterations < 20000:  # Stage 1: Base training
+    # PLAY MODE DETECTION: If no runner is attached or marked as inference, use Stage 4
+    # This check must happen BEFORE stage calculation to ensure it persists across resets
+    is_inference_mode = (
+        hasattr(env.unwrapped, '_is_inference_mode') or  # Explicitly marked by play.py
+        not hasattr(env.unwrapped, '_rsl_rl_runner') or
+        (hasattr(env.unwrapped, '_rsl_rl_runner') and env.unwrapped._rsl_rl_runner is None)  # type: ignore
+    )
+    
+    if is_inference_mode:
+        # ALWAYS use Stage 4 in inference mode, even after resets
+        target_stage = 4
+        height_range = (0.18, 0.48)  # ±15cm (maximum range)
+        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad)
+        pitch_range = (-0.262, 0.262)  # ±15°
+        yaw_range = (-0.262, 0.262)  # ±15°
+        
+        # Print message only once per session
+        if not hasattr(env, "_curriculum_inference_message_shown"):
+            env._curriculum_inference_message_shown = True  # type: ignore
+            print(f"\n{'='*80}")
+            print("[Curriculum] INFERENCE MODE DETECTED")
+            print("  Automatically setting to Stage 4 (Maximum Range)")
+            print("  This allows full height and pose control capability")
+            print(f"{'='*80}\n")
+    elif total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
         height_range = (default_height, default_height)  # Fixed at 0.33m
         roll_range = (0.0, 0.0)  # Fixed at 0°
