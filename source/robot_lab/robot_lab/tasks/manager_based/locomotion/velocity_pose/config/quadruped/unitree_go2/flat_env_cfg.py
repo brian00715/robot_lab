@@ -22,10 +22,13 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
 
         # ------------------------------Command Ranges for Inference------------------------------
         # Adjust height range: 0.20-0.46m (Go2 default is 0.35m)
-        # Adjust roll range: ±30 degrees (±0.524 radians)
+        # Adjust roll/pitch ranges based on real robot capabilities (from rosbag analysis):
+        # - Real robot can achieve: roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
+        # - Training with margin: roll ±45°, pitch ±25°
         import math
         self.commands.base_velocity_pose.ranges.height = (0.20, 0.46)
-        self.commands.base_velocity_pose.ranges.roll = (-math.pi/6, math.pi/6)  # ±30°
+        self.commands.base_velocity_pose.ranges.roll = (-math.pi/4, math.pi/4)  # ±45° (was ±30°)
+        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)  # ±25° (was not set)
         # Keep default height at 0.35m (middle of range)
         self.commands.base_velocity_pose.default_height = 0.35
         

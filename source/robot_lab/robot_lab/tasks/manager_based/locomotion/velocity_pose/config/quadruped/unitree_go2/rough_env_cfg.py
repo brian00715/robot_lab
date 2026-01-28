@@ -42,10 +42,12 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # Set default height for Go2 (approximately 0.33m)
         self.commands.base_velocity_pose.default_height = 0.33
         # Stage 3-4 ranges for inference/play mode: test full pose control capability
-        # Use wider ranges to demonstrate learned pose tracking ability
+        # Based on real robot capabilities from rosbag analysis (2026-01-28):
+        # - Real robot achieved: roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
+        # - Training with margin for robustness: roll ±45°, pitch ±25°
         self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  # ±10cm (Stage 3 range)
-        self.commands.base_velocity_pose.ranges.roll = (-0.349, 0.349)   # ±20° (Stage 3 range)
-        self.commands.base_velocity_pose.ranges.pitch = (-0.21, 0.21)    # ±12° (Stage 3 range) - ENABLED!
+        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)   # ±45° (was ±20°)
+        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)  # ±25° (was ±12°)
 
         # ------------------------------Observations------------------------------
         self.observations.policy.base_lin_vel.scale = 2.0
@@ -228,10 +230,11 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.curriculum.command_levels_ang_vel = None
         
         # Enable stage-based curriculum for height and pose commands
-        # This curriculum automatically switches between 3 stages based on training iterations:
-        # - Stage 1 (0-20k): Fixed at default (no height/pose variation)
-        # - Stage 2 (20k-40k): Small ranges (±3cm height, ±8° roll, 0° pitch)
-        # - Stage 3 (40k+): Large ranges (±7cm height, ±10° roll, ±8° pitch)
+        # This curriculum automatically switches between 4 stages based on training iterations:
+        # - Stage 1 (0-20k): Fixed at default (no height/pose variation, upward reward enabled)
+        # - Stage 2 (20k-30k): Small ranges (±3cm height, ±8° roll, 0° pitch, upward disabled)
+        # - Stage 3 (30k-45k): Medium ranges (±10cm height, ±35° roll, ±20° pitch)
+        # - Stage 4 (45k+): Large ranges (±12.5cm height, ±45° roll, ±25° pitch) - based on real robot
         from isaaclab.managers import CurriculumTermCfg as CurrTerm
         self.curriculum.command_curriculum_height_pose = CurrTerm(
             func=mdp.command_curriculum_height_pose,

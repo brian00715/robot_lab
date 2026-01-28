@@ -7,8 +7,9 @@ This module implements a fixed-iteration stage-based curriculum:
 
 - Stage 1 (0-20,000 iterations): Base training - Height and pose commands fixed at default (roll=0°, pitch=0°, yaw=0°, height=0.33m)
 - Stage 2 (20,000-30,000 iterations): Small range - Height and pose commands with limited variation (±3cm height, ±8° roll, pitch=0°, yaw=0°)
-- Stage 3 (30,000-45,000 iterations): Medium range for height and pose commands (±10cm height, ±20° roll, ±12° pitch, yaw=0°)
-- Stage 4 (45,000+ iterations): Large range for height and pose commands (±15cm height, ±30° roll, ±15° pitch, yaw=0°)
+- Stage 3 (30,000-45,000 iterations): Medium range for height and pose commands (±10cm height, ±35° roll, ±20° pitch, yaw=0°)
+- Stage 4 (45,000+ iterations): Large range for height and pose commands (±12.5cm height, ±45° roll, ±25° pitch, yaw=0°)
+  * Stage 4 ranges based on real robot rosbag analysis (2026-01-28): real robot achieved roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
 
 NOTE: Yaw is ALWAYS fixed at 0° to decouple from localization systems. Only roll and pitch are tracked,
 which can be determined from IMU gravity projection alone without external localization.
@@ -272,21 +273,22 @@ def command_curriculum_height_pose(
         - Duration: 10,000 iterations
     
     Stage 3 (30,000-45,000 iterations):
-        - Medium range expansion
+        - Medium range expansion (approaching real robot limits)
         - Height range: [0.23m, 0.43m] (±10cm)
-        - Roll range: [-20°, +20°] (±0.349 rad)
-        - Pitch range: [-12°, +12°] (±0.21 rad)
-        - Yaw range: [-12°, +12°] (±0.21 rad)
-        - Focus: Learn medium-range pose control with pitch and yaw
+        - Roll range: [-35°, +35°] (±0.611 rad)
+        - Pitch range: [-20°, +20°] (±0.349 rad)
+        - Yaw: 0° (keep fixed)
+        - Focus: Learn medium-range pose control approaching hardware limits
         - Duration: 15,000 iterations
     
     Stage 4 (45,000+ iterations):
-        - Maximum range mastery
-        - Height range: [0.18m, 0.48m] (±15cm, maximum range)
-        - Roll range: [-30°, +30°] (±0.524 rad, π/6)
-        - Pitch range: [-15°, +15°] (±0.262 rad)
-        - Yaw range: [-15°, +15°] (±0.262 rad)
-        - Focus: Master full pose control at maximum safe limits
+        - Maximum range mastery (based on real robot rosbag 2026-01-28)
+        - Height range: [0.18m, 0.43m] (±12.5cm, maximum safe range)
+        - Roll range: [-45°, +45°] (±0.785 rad, π/4) - real robot: [-40.73°, +39.05°]
+        - Pitch range: [-25°, +25°] (±0.436 rad) - real robot: [-23.29°, +24.91°]
+        - Yaw: 0° (keep fixed)
+        - Focus: Master full pose control at maximum safe limits with margin
+        - Duration: Open-ended (continue until performance plateaus)
         - Duration: Open-ended (continue until performance plateaus)
     
     The curriculum automatically handles --resume by tracking env.common_step_counter,
@@ -439,17 +441,17 @@ def command_curriculum_height_pose(
         roll_range = (-0.14, 0.14)  # ±8°
         pitch_range = (0.0, 0.0)  # Keep pitch fixed
         yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
-    elif total_iterations < 45000:  # Stage 3: Medium range
+    elif total_iterations < 45000:  # Stage 3: Medium range (approaching real robot limits)
         target_stage = 3
         height_range = (0.23, 0.43)  # ±10cm
-        roll_range = (-0.349, 0.349)  # ±20°
-        pitch_range = (-0.21, 0.21)  # ±12°
+        roll_range = (-0.611, 0.611)  # ±35° (approaching ±40° real limit)
+        pitch_range = (-0.349, 0.349)  # ±20° (approaching ±24° real limit)
         yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
-    else:  # >= 45000, Stage 4: Maximum range
+    else:  # >= 45000, Stage 4: Maximum range (based on real robot rosbag 2026-01-28)
         target_stage = 4
         height_range = (0.18, 0.43)  # [0.18m, 0.43m] range
-        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad)
-        pitch_range = (-0.262, 0.262)  # ±15°
+        roll_range = (-0.785, 0.785)  # ±45° (real: ±40°, trained with margin)
+        pitch_range = (-0.436, 0.436)  # ±25° (real: ±24°, trained with margin)
         yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
     
     # Initialize curriculum state on first call, using the target_stage we just determined
