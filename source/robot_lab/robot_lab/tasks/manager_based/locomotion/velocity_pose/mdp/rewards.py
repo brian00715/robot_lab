@@ -268,6 +268,196 @@ def track_orientation_exp(
     return reward
 
 
+def track_orientation_exp_without_yaw(
+    env: ManagerBasedRLEnv,
+    std: float,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward tracking orientation command (roll and pitch only, yaw ignored) using quaternion-based error calculation.
+    
+    This function is identical to track_orientation_exp but completely ignores yaw component.
+    This is designed to avoid coupling with localization systems, as yaw cannot be determined
+    from IMU alone (only roll and pitch can be calculated from gravity projection).
+    
+    Coordinate System Framework:
+    - World Frame A: Fixed global reference (never changes)
+    - Robot Point Frame B (Yaw-Aligned): Z-axis vertical, XY rotates with motion direction
+    - Robot Base Frame C (Body): Fully follows base orientation (roll, pitch, yaw)
+    
+    This function tracks ONLY roll and pitch of Base Frame C relative to Point Frame B.
+    Yaw is completely ignored in both command and error calculation.
+    
+    Args:
+        env: Environment instance
+        std: Tolerance parameter in radians (smaller = more sensitive)
+              e.g., std=0.15rad ≈ 8.6° tolerance
+        command_name: Command name in command manager (must be 7D command)
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Reward values with shape (num_envs,)
+        
+    Design Intent:
+        - Use quaternion math in yaw-aligned frame (Point Frame B)
+        - Only tracks roll and pitch (yaw is IGNORED)
+        - More accurate than angle decomposition (no coupling errors)
+        - Exponential reward function for sensitivity to small errors
+        - Decoupled from localization systems (no yaw requirement)
+        
+    Reward Characteristics:
+        - Angle error = 0.00rad (0°): reward = 1.00 (perfect)
+        - Angle error = 0.05rad (2.9°): reward ≈ 0.72 (good)
+        - Angle error = 0.15rad (8.6°, =std): reward ≈ 0.37 (acceptable)
+        - Angle error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
+        
+    Implementation:
+        1. Extract target [roll, pitch] from 7D command (indices 4, 5) - yaw ignored
+        2. Convert to target quaternion with yaw=0 in Point Frame B
+        3. Get current base quaternion in World Frame A
+        4. Extract motion direction (yaw_motion) from World Frame A
+        5. Project current quaternion to Point Frame B by removing motion direction
+        6. Compute quaternion error between target and current (both in Point Frame B)
+        7. Extract rotation angle from error quaternion
+        8. Apply exponential reward based on angle error
+    """
+    from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, quat_conjugate
+    
+    asset: RigidObject = env.scene[asset_cfg.name]
+    
+    # Get target orientation command (indices 4, 5 of 7D command: [vx, vy, ωz, h, roll, pitch, yaw])
+    # NOTE: We completely ignore yaw (index 6) to decouple from localization
+    command = env.command_manager.get_command(command_name)
+    target_roll = command[:, 4]   # (num_envs,) - Roll in Point Frame B
+    target_pitch = command[:, 5]  # (num_envs,) - Pitch in Point Frame B
+    # target_yaw is NOT used - hardcoded to 0
+    
+    # Convert target [roll, pitch, 0] to quaternion in Point Frame B
+    # Quaternion order: [w, x, y, z]
+    # YAW IS HARDCODED TO ZERO - this decouples from localization
+    target_quat = quat_from_euler_xyz(
+        roll=target_roll,
+        pitch=target_pitch,
+        yaw=torch.zeros_like(target_roll)  # Always 0 - no yaw tracking
+    )  # (num_envs, 4)
+    
+    # Get current base quaternion in World Frame A
+    current_quat_w = asset.data.root_quat_w  # (num_envs, 4) in [w, x, y, z] format
+    
+    # Extract motion direction (yaw_motion) from World Frame A
+    # This represents the rotation from World Frame A to Point Frame B
+    # For quaternion [w, x, y, z], yaw angle can be extracted by projecting to z-axis:
+    # yaw = atan2(2*(w*z + x*y), w^2 + x^2 - y^2 - z^2)
+    # This is more numerically stable than the 1 - 2*(y^2 + z^2) form
+    w, x, y, z = current_quat_w[:, 0], current_quat_w[:, 1], current_quat_w[:, 2], current_quat_w[:, 3]
+    yaw_angle = torch.atan2(2 * (w * z + x * y), w * w + x * x - y * y - z * z)
+    
+    # Create pure yaw quaternion: q_yaw = [cos(yaw/2), 0, 0, sin(yaw/2)]
+    # This quaternion is automatically normalized since cos²(θ/2) + sin²(θ/2) = 1
+    half_yaw = yaw_angle / 2
+    current_yaw_quat = torch.stack([
+        torch.cos(half_yaw),  # w
+        torch.zeros_like(half_yaw),  # x
+        torch.zeros_like(half_yaw),  # y
+        torch.sin(half_yaw)   # z
+    ], dim=1)  # (num_envs, 4) - guaranteed to be normalized
+    
+    # Remove yaw from current quaternion to get yaw-aligned orientation
+    # current_quat_yaw_aligned = yaw_quat^(-1) * current_quat_w
+    current_yaw_quat_inv = quat_conjugate(current_yaw_quat)
+    current_quat_yaw_aligned = quat_mul(current_yaw_quat_inv, current_quat_w)  # (num_envs, 4)
+    
+    # IMPROVED METHOD: Only consider roll and pitch components (x, y) in yaw-aligned frame
+    # This completely decouples from yaw by ignoring quaternion z-component
+    #
+    # In yaw-aligned frame quaternion [w, x, y, z]:
+    #   x component ~ roll error
+    #   y component ~ pitch error
+    #   z component ~ yaw error (IGNORED)
+    #
+    # Instead of computing full quaternion error, we directly measure roll/pitch deviation
+    # using only the x and y components of the yaw-aligned quaternion.
+
+    # Method: Use small angle approximation for roll and pitch
+    # For small rotations, quaternion components approximate half-angles:
+    #   x ≈ sin(roll/2) ≈ roll/2 (for small roll)
+    #   y ≈ sin(pitch/2) ≈ pitch/2 (for small pitch)
+    #
+    # However, for larger angles we need the full formula:
+    #   roll = 2 * atan2(x, w)  (ignoring pitch/yaw coupling)
+    #   pitch = 2 * atan2(y, w)  (ignoring roll/yaw coupling)
+
+    # Extract roll and pitch from yaw-aligned quaternions
+    # Current orientation in yaw-aligned frame
+    current_x = current_quat_yaw_aligned[:, 1]  # roll component
+    current_y = current_quat_yaw_aligned[:, 2]  # pitch component
+    # current_z is ignored (yaw component)
+
+    # Target orientation in yaw-aligned frame
+    target_x = target_quat[:, 1]  # roll component (from target_roll)
+    target_y = target_quat[:, 2]  # pitch component (from target_pitch)
+    # target_z = 0 (yaw is zero)
+
+    # Compute roll and pitch errors directly from quaternion components
+    # Using the fact that for rotations around x-axis (roll): x = sin(roll/2)
+    # and for rotations around y-axis (pitch): y = sin(pitch/2)
+
+    # For better accuracy, compute the angle error from x and y components only
+    # Error metric: ||[x_err, y_err]||^2 where x_err = x_current - x_target
+    roll_error_component = current_x - target_x
+    pitch_error_component = current_y - target_y
+
+    # Compute angular error from components (using L2 norm of sine of half-angles)
+    # This is proportional to the actual angular error for small angles
+    # For larger angles, it still provides a good approximation
+    component_error_norm = torch.sqrt(roll_error_component**2 + pitch_error_component**2)
+
+    # Convert component error to approximate angle error
+    # Since x ≈ sin(roll/2), the error in x is approximately error_x ≈ cos(roll/2) * (Δroll/2)
+    # For simplicity and numerical stability, we use: angle_error ≈ 2 * arcsin(component_error_norm)
+    # Clamp to avoid numerical issues with arcsin (domain is [-1, 1])
+    angle_error = 2.0 * torch.arcsin(torch.clamp(component_error_norm, 0.0, 1.0))  # (num_envs,)    # Use exponential growth reward: smaller error -> exponentially higher reward
+    # reward = exp(-|error|/std) where std controls sensitivity
+    reward = torch.exp(-angle_error / std)
+    
+    # Only give reward when robot is upright
+    projected_gravity = asset.data.projected_gravity_b
+    upright_factor = torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
+    reward *= upright_factor
+    
+    # Debug: Print statistics every 100 steps (same as original function)
+    if not hasattr(env, "_orient_noyaw_debug_counter"):
+        env._orient_noyaw_debug_counter = 0
+    env._orient_noyaw_debug_counter += 1
+    if env._orient_noyaw_debug_counter % 100 == 0:
+        gz = projected_gravity[:, 2]
+        # Verify yaw quaternion normalization
+        yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
+        current_quat_w_norm = torch.norm(current_quat_w, dim=1)
+        
+        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
+        print(f"\n[DEBUG] Orientation Tracking (NO YAW) Reward Statistics (Step {env._orient_noyaw_debug_counter}){stage_info}:")
+        print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
+        print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
+        print("  Target yaw:                    IGNORED (no yaw tracking)")
+        print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
+        print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
+        print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
+        print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
+        print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
+        print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
+        print(f"  Roll error component (x):      mean={roll_error_component.mean().item():.6f}, max={roll_error_component.abs().max().item():.6f}")
+        print(f"  Pitch error component (y):     mean={pitch_error_component.mean().item():.6f}, max={pitch_error_component.abs().max().item():.6f}")
+        print(f"  Component error norm:          mean={component_error_norm.mean().item():.6f}, max={component_error_norm.max().item():.6f}")
+        print(f"  Angular error (deg):           mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
+        print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+        print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+        print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
+        print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
+    
+    return reward
+
+
 ##
 # Command-aware conditional penalties
 ##

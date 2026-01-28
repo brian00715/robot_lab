@@ -41,11 +41,11 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # ------------------------------Commands------------------------------
         # Set default height for Go2 (approximately 0.33m)
         self.commands.base_velocity_pose.default_height = 0.33
-        # Stage 2 ranges for inference/play mode: test height adjustment and roll balance
-        # These ranges match Stage 2 training curriculum (14.5k-25k iterations)
-        self.commands.base_velocity_pose.ranges.height = (0.30, 0.36)  # ±3cm from default
-        self.commands.base_velocity_pose.ranges.roll = (-0.14, 0.14)   # ±8° (±0.14 rad)
-        self.commands.base_velocity_pose.ranges.pitch = (0.0, 0.0)     # Keep fixed (Stage 2 setting)
+        # Stage 3-4 ranges for inference/play mode: test full pose control capability
+        # Use wider ranges to demonstrate learned pose tracking ability
+        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  # ±10cm (Stage 3 range)
+        self.commands.base_velocity_pose.ranges.roll = (-0.349, 0.349)   # ±20° (Stage 3 range)
+        self.commands.base_velocity_pose.ranges.pitch = (-0.21, 0.21)    # ±12° (Stage 3 range) - ENABLED!
 
         # ------------------------------Observations------------------------------
         self.observations.policy.base_lin_vel.scale = 2.0
@@ -146,7 +146,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         ]
 
         # Action penalties
-        self.rewards.action_rate_l2.weight = -0.01
+        self.rewards.action_rate_l2.weight = -0.13
 
         # Contact sensor
         self.rewards.undesired_contacts.weight = -1.0
@@ -155,8 +155,8 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
         # Velocity-tracking rewards (existing) - Doubled for stronger tracking signal
-        self.rewards.track_lin_vel_xy_exp.weight = 6.0  # Increased from 3.0 (2x)
-        self.rewards.track_ang_vel_z_exp.weight = 3.0   # Increased from 1.5 (2x)
+        self.rewards.track_lin_vel_xy_exp.weight = 6.0  
+        self.rewards.track_ang_vel_z_exp.weight = 3.0   
         
         # New: Height tracking reward with exponential growth
         # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
@@ -173,13 +173,15 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             }
         )
         
-        # New: Orientation tracking reward (roll, pitch, yaw) with exponential growth
-        # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
+        # New: Orientation tracking reward (roll and pitch only, yaw ignored) with exponential growth
+        # NOTE: This uses track_orientation_exp_without_yaw to decouple from localization systems
+        # Only tracks roll and pitch (yaw is hardcoded to 0°) - can be determined from IMU gravity projection
+        # Parameters (std, weight) will be dynamically adjusted by curriculum learning
         # Initial values are placeholders - curriculum will override based on stage:
         #   Stage 3 (0-15k): weight=1.5, std=sqrt(0.10)≈0.316rad (18°)
         #   Stage 4 (15k+):  weight=2.0, std=sqrt(0.10)≈0.316rad (18°)
         self.rewards.track_orientation_exp = RewTerm(
-            func=mdp.track_orientation_exp,
+            func=mdp.track_orientation_exp_without_yaw,  # CHANGED: Use no-yaw version
             weight=1.0,  # Placeholder - will be updated by curriculum
             params={
                 "command_name": "base_velocity_pose",
@@ -210,7 +212,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_gait.weight = 0.5
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
-        self.rewards.upward.weight = 1.0
+        self.rewards.upward.weight = 1.0  # Placeholder - controlled by curriculum (Stage 1: 1.0, Stage 2-4: 0.0)
 
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "UnitreeGo2VelocityPoseRoughEnvCfg":
