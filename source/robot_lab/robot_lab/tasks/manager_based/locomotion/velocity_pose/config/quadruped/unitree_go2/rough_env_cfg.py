@@ -148,7 +148,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         ]
 
         # Action penalties
-        self.rewards.action_rate_l2.weight = -0.13
+        self.rewards.action_rate_l2.weight = -0.20
 
         # Contact sensor
         self.rewards.undesired_contacts.weight = -1.0
@@ -156,9 +156,12 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.contact_forces.weight = -1.5e-4
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
-        # Velocity-tracking rewards (existing) - Doubled for stronger tracking signal
+        # Velocity-tracking rewards (existing)
         self.rewards.track_lin_vel_xy_exp.weight = 6.0  
-        self.rewards.track_ang_vel_z_exp.weight = 3.0   
+        # Increased weight and reduced tolerance to prevent self-spinning during pose/height adjustments
+        # This reward directly uses IMU angular velocity - deployable on real robot without localization
+        self.rewards.track_ang_vel_z_exp.weight = 6.0  
+        self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.05)  
         
         # New: Height tracking reward with exponential growth
         # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
