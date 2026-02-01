@@ -29,18 +29,7 @@ if TYPE_CHECKING:
 
 
 def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
-    """Update reward parameters (std and weight) based on curriculum stage.
-    
-    Stage-based reward parameter progression:
-    - Stage 1: Pose tracking disabled, upward reward enabled to maintain stability
-    - Stage 2: Pose tracking with relaxed tolerance, upward disabled
-    - Stage 3: Strict parameters + increased weight
-      * Height: std=0.22m, weight=6.0
-      * Orientation: std=0.316rad (18°), weight=6.0
-    - Stage 4: Very strict parameters + high weight
-      * Height: std=0.22m, weight=8.0
-      * Orientation: std=0.316rad (18°), weight=8.0
-    """
+
     import math
     
     # Try to get pose tracking reward terms (may not exist in all environments)
@@ -83,13 +72,13 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         
         # Yaw control: relaxed tolerance (allow some drift during basic locomotion learning)
         if ang_vel_z_tracking_cfg:
-            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.25)  # std = 0.5 rad/s (28.6°/s - relaxed)
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.25)  
         
         # Enable locomotion penalties in Stage 1 only
         if lin_vel_z_l2_cfg:
-            lin_vel_z_l2_cfg.weight = -2.0  # Penalize vertical velocity
+            lin_vel_z_l2_cfg.weight = -2.0  
         if ang_vel_xy_l2_cfg:
-            ang_vel_xy_l2_cfg.weight = 0.0  # Don't penalize roll/pitch in Stage 1
+            ang_vel_xy_l2_cfg.weight = 0.0  
         
         # Enable upward reward in Stage 1 to maintain stability during basic locomotion learning
         if upward_cfg:
@@ -97,19 +86,16 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     
     # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties and upward
     elif stage == 2:
-        # Height tracking: relaxed tolerance, moderate weight
         if height_reward_cfg:
-            height_reward_cfg.params["std"] = math.sqrt(0.25)  # std = 0.5m (very relaxed)
-            height_reward_cfg.weight = 4.0  # Increased to overcome upward habit
+            height_reward_cfg.params["std"] = math.sqrt(0.25)  
+            height_reward_cfg.weight = 4.0  
         
-        # Orientation tracking: relaxed tolerance, moderate weight
         if orient_reward_cfg:
-            orient_reward_cfg.params["std"] = math.sqrt(0.50)  # std ≈ 0.707rad (40°)
-            orient_reward_cfg.weight = 4.0  # Increased to overcome upward habit
+            orient_reward_cfg.params["std"] = math.sqrt(0.50)  
+            orient_reward_cfg.weight = 4.0  
         
-        # Yaw control: moderate tolerance (start reducing yaw drift)
         if ang_vel_z_tracking_cfg:
-            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316 rad/s (18.1°/s - moderate)
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.10)  
         
         # Disable locomotion penalties from Stage 2 onwards
         if lin_vel_z_l2_cfg:
@@ -123,21 +109,17 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     
     # Stage 3: Strict tracking with high weight, upward remains disabled
     elif stage == 3:
-        # Height tracking: strict tolerance, high weight
         if height_reward_cfg:
-            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m
-            height_reward_cfg.weight = 12.0  # Further increased (2x from Stage 2)
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  
+            height_reward_cfg.weight = 12.0 
         
-        # Orientation tracking: strict tolerance, high weight
         if orient_reward_cfg:
-            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (18°)
-            orient_reward_cfg.weight = 12.0  # Further increased (2x from Stage 2)
+            orient_reward_cfg.params["std"] = math.sqrt(0.10)  
+            orient_reward_cfg.weight = 12.0  
         
-        # Yaw control: strict tolerance (minimize yaw drift during pose adjustments)
         if ang_vel_z_tracking_cfg:
-            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.025)  # std ≈ 0.158 rad/s (9.1°/s - strict)
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.025)  
         
-        # Keep locomotion penalties disabled
         if lin_vel_z_l2_cfg:
             lin_vel_z_l2_cfg.weight = 0.0
         if ang_vel_xy_l2_cfg:
@@ -149,19 +131,18 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     
     # Stage 4: Very strict tracking with very high weight, upward remains disabled
     elif stage == 4:
-        # Height tracking: very strict tolerance, very high weight
         if height_reward_cfg:
-            height_reward_cfg.params["std"] = math.sqrt(0.05)  # std ≈ 0.22m (same as Stage 3)
-            height_reward_cfg.weight = 16.0  # Further increased
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  
+            height_reward_cfg.weight = 16.0 
         
         # Orientation tracking: very strict tolerance, very high weight
         if orient_reward_cfg:
-            orient_reward_cfg.params["std"] = math.sqrt(0.10)  # std ≈ 0.316rad (same as Stage 3)
-            orient_reward_cfg.weight = 16.0  # Further increased
+            orient_reward_cfg.params["std"] = math.sqrt(0.10) 
+            orient_reward_cfg.weight = 16.0  
         
         # Yaw control: very strict tolerance (near-zero yaw drift tolerance)
         if ang_vel_z_tracking_cfg:
-            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.01)  # std = 0.1 rad/s (5.7°/s - very strict)
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.015)  
         
         # Keep locomotion penalties disabled
         if lin_vel_z_l2_cfg:
@@ -283,78 +264,22 @@ def command_curriculum_height_pose(
     env_ids: Sequence[int],
     command_name: str = "base_velocity_pose",
 ) -> torch.Tensor:
-    """Stage-based curriculum for height and pose commands with fixed iteration thresholds.
-    
-    This curriculum implements a 4-stage progression based on total training iterations:
-    
-    Stage 1 (0-20,000 iterations):
-        - Base training phase
-        - Height: 0.33m (fixed at default, ±0cm)
-        - Roll: 0° (fixed), Pitch: 0° (fixed), Yaw: 0° (fixed)
-        - Focus: Learn basic locomotion without pose control
-        - Duration: 20,000 iterations
-    
-    Stage 2 (20,000-25,000 iterations):
-        - Small range introduction
-        - Height range: [0.30m, 0.36m] (±3cm from default 0.33m)
-        - Roll range: [-8°, +8°] (±0.14 rad)
-        - Pitch: 0° (keep fixed)
-        - Yaw: 0° (keep fixed)
-        - Focus: Start learning height and roll control
-        - Duration: 10,000 iterations
-    
-    Stage 3 (25,000-30,000 iterations):
-        - Medium range expansion (approaching real robot limits)
-        - Height range: [0.23m, 0.43m] (±10cm)
-        - Roll range: [-35°, +35°] (±0.611 rad)
-        - Pitch range: [-20°, +20°] (±0.349 rad)
-        - Yaw: 0° (keep fixed)
-        - Focus: Learn medium-range pose control approaching hardware limits
-        - Duration: 15,000 iterations
-    
-    Stage 4 (30,000+ iterations):
-        - Maximum range mastery (based on real robot rosbag 2026-01-28)
-        - Height range: [0.18m, 0.43m] (±12.5cm, maximum safe range)
-        - Roll range: [-45°, +45°] (±0.785 rad, π/4) - real robot: [-40.73°, +39.05°]
-        - Pitch range: [-25°, +25°] (±0.436 rad) - real robot: [-23.29°, +24.91°]
-        - Yaw: 0° (keep fixed)
-        - Focus: Master full pose control at maximum safe limits with margin
-        - Duration: Open-ended (continue until performance plateaus)
-        - Duration: Open-ended (continue until performance plateaus)
-    
-    The curriculum automatically handles --resume by tracking env.common_step_counter,
-    which persists across training sessions.
-    
-    Args:
-        env: The RL environment instance
-        env_ids: Environment IDs to update (not used, curriculum is global)
-        command_name: Name of the command term (default: "base_velocity_pose")
-    
-    Returns:
-        Current stage number as a tensor for logging (1, 2, 3, or 4)
-    """
+
     # Get command manager ranges
     command_term = env.command_manager.get_term(command_name)
     ranges = command_term.cfg.ranges
     default_height = command_term.default_height
     
     # Calculate total iterations from environment step counter
-    # CRITICAL FIX: Use environment's internal tracking to get true training iteration
-    # 
-    # When --resume is used, we need to get the TRUE iteration count that persists.
-    # The environment's metrics or episode tracking can help us calculate this.
-    # 
-    # Method: Use the logged "Total timesteps" from metrics if available,
-    # otherwise fall back to calculating from episode/step counters.
-    
+
     # Try to get iteration from various sources (in priority order):
     if hasattr(env, '_curriculum_manual_iteration'):
         # Manually injected by a wrapper (most reliable)
-        total_iterations = env._curriculum_manual_iteration  # type: ignore
+        total_iterations = env._curriculum_manual_iteration  
         iteration_source = "manual_injection"
     elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, '_rsl_rl_runner'):
         # Get iteration from RSL-RL runner (injected by train.py)
-        runner = env.unwrapped._rsl_rl_runner  # type: ignore
+        runner = env.unwrapped._rsl_rl_runner  
         if hasattr(runner, 'current_learning_iteration'):
             total_iterations = runner.current_learning_iteration
             iteration_source = "rsl_rl_runner"
@@ -381,20 +306,14 @@ def command_curriculum_height_pose(
         total_iterations = total_steps // steps_per_iteration
         iteration_source = "fallback_calculation"
         
-        # WORKAROUND: If we detect we're likely resumed (curriculum stage doesn't match iteration),
-        # try to infer the correct iteration from TensorBoard logged metrics
         if hasattr(env, '_curriculum_stage'):
-            # Calculate expected stage based on current iteration count
             expected_stage_for_iter = (
-                1 if total_iterations < 20000 else  # Stage 1: 0-20k
-                2 if total_iterations < 25000 else  # Stage 2: 20k-25k
-                3 if total_iterations < 30000 else  # Stage 3: 25k-45k
-                4  # Stage 4: 45k+
+                1 if total_iterations < 20000 else  
+                2 if total_iterations < 25000 else  
+                3 if total_iterations < 30000 else  
+                4  
             )
-            if env._curriculum_stage != expected_stage_for_iter:  # type: ignore
-                # Mismatch detected! We might be resumed.
-                # Unfortunately, we can't reliably get the true iteration here.
-                # Best we can do is keep the current stage and log a warning.
+            if env._curriculum_stage != expected_stage_for_iter:  
                 if not hasattr(env, '_curriculum_resume_warning_shown'):
                     print(f"\n{'!'*80}")
                     print("[WARNING] Curriculum iteration mismatch detected!")
@@ -421,21 +340,15 @@ def command_curriculum_height_pose(
         print(f"  common_step_counter: {env.common_step_counter:,}")
         print(f"{'='*80}\n")
         
-    env._curriculum_debug_counter += 1  # type: ignore
-    if env._curriculum_debug_counter % 1000 == 0:  # type: ignore
-        print(f"\n[DEBUG Curriculum] Call {env._curriculum_debug_counter}:")  # type: ignore
+    env._curriculum_debug_counter += 1 
+    if env._curriculum_debug_counter % 1000 == 0:  
+        print(f"\n[DEBUG Curriculum] Call {env._curriculum_debug_counter}:") 
         print(f"  Iteration source: {iteration_source}")
         print(f"  common_step_counter: {env.common_step_counter:,}")
         print(f"  total_iterations: {total_iterations:,}")
         print(f"  Current _curriculum_stage: {getattr(env, '_curriculum_stage', 'NOT SET')}")
     
-    # Determine current stage based on total iterations
-    # Stage 1: 0-20,000 (Base training with fixed pose)
-    # Stage 2: 20,000-25,000 (Small range)
-    # Stage 3: 25,000-30,000 (Medium range)
-    # Stage 4: 30,000+ (Maximum range)
     
-    # PLAY MODE DETECTION: If no runner is attached or marked as inference, use Stage 4
     # This check must happen BEFORE stage calculation to ensure it persists across resets
     is_inference_mode = (
         hasattr(env.unwrapped, '_is_inference_mode') or  # Explicitly marked by play.py
@@ -462,33 +375,33 @@ def command_curriculum_height_pose(
             print(f"{'='*80}\n")
     elif total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
-        height_range = (default_height, default_height)  # Fixed at 0.33m
-        roll_range = (0.0, 0.0)  # Fixed at 0°
-        pitch_range = (0.0, 0.0)  # Fixed at 0°
-        yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
-    elif total_iterations < 25000:  # Stage 2: Small range
+        height_range = (default_height, default_height)  
+        roll_range = (0.0, 0.0) 
+        pitch_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)  
+    elif total_iterations < 25000:  
         target_stage = 2
-        height_range = (0.30, 0.36)  # ±3cm
-        roll_range = (-0.14, 0.14)  # ±8°
-        pitch_range = (0.0, 0.0)  # Keep pitch fixed
-        yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
-    elif total_iterations < 30000:  # Stage 3: Medium range (approaching real robot limits)
+        height_range = (0.30, 0.36) 
+        roll_range = (-0.14, 0.14)  
+        pitch_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)  
+    elif total_iterations < 30000:  
         target_stage = 3
-        height_range = (0.23, 0.43)  # ±10cm
-        roll_range = (-0.611, 0.611)  # ±35° (approaching ±40° real limit)
-        pitch_range = (-0.349, 0.349)  # ±20° (approaching ±24° real limit)
-        yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
-    else:  # >= 30000, Stage 4: Maximum range (based on real robot rosbag 2026-01-28)
+        height_range = (0.23, 0.43)  
+        roll_range = (-0.611, 0.611)  
+        pitch_range = (-0.349, 0.349)  
+        yaw_range = (0.0, 0.0)  
+    else: 
         target_stage = 4
-        height_range = (0.18, 0.43)  # [0.18m, 0.43m] range
-        roll_range = (-0.785, 0.785)  # ±45° (real: ±40°, trained with margin)
-        pitch_range = (-0.436, 0.436)  # ±25° (real: ±24°, trained with margin)
-        yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
+        height_range = (0.18, 0.43)  
+        roll_range = (-0.785, 0.785)  
+        pitch_range = (-0.436, 0.436)  
+        yaw_range = (0.0, 0.0) 
     
     # Initialize curriculum state on first call, using the target_stage we just determined
     if not hasattr(env, "_curriculum_stage"):
-        env._curriculum_stage = target_stage  # type: ignore
-        env._curriculum_last_update = 0  # type: ignore
+        env._curriculum_stage = target_stage  
+        env._curriculum_last_update = 0  
         
         # IMPORTANT: Set initial command ranges based on starting stage
         ranges.height = height_range
@@ -510,9 +423,9 @@ def command_curriculum_height_pose(
         print(f"{'='*80}\n")
     
     # Update ranges if stage changed
-    if target_stage != env._curriculum_stage:  # type: ignore
-        env._curriculum_stage = target_stage  # type: ignore
-        env._curriculum_last_update = total_iterations  # type: ignore
+    if target_stage != env._curriculum_stage:  
+        env._curriculum_stage = target_stage  
+        env._curriculum_last_update = total_iterations  
         
         # Update command ranges
         ranges.height = height_range
@@ -536,18 +449,18 @@ def command_curriculum_height_pose(
         print(f"{'='*80}\n")
     
     # Log current stage every 100 iterations with detailed command ranges
-    if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  # type: ignore
+    if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  
         iterations_in_stage = total_iterations - (
-            0 if target_stage == 1 else        # Stage 1 starts from 0
-            20000 if target_stage == 2 else    # Stage 2 starts from 20000
-            25000 if target_stage == 3 else    # Stage 3 starts from 25000
-            30000                              # Stage 4 starts from 30000
+            0 if target_stage == 1 else       
+            20000 if target_stage == 2 else    
+            25000 if target_stage == 3 else   
+            30000                             
         )
         stage_total = (
-            20000 if target_stage == 1 else    # Stage 1: 0-20000 (20k iterations)
-            10000 if target_stage == 2 else    # Stage 2: 20000-25000 (10k iterations)
-            15000 if target_stage == 3 else    # Stage 3: 25000-30000 (15k iterations)
-            15000                              # Stage 4: 30000+ (estimate 15k iterations for progress display)
+            20000 if target_stage == 1 else   
+            10000 if target_stage == 2 else   
+            15000 if target_stage == 3 else    
+            15000                              
         )
         progress = min(100.0, (iterations_in_stage / stage_total) * 100) if stage_total > 0 else 0.0
         

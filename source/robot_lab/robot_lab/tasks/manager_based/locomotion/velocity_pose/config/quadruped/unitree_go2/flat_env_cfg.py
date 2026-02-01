@@ -21,21 +21,13 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         super().__post_init__()
 
         # ------------------------------Command Ranges for Inference------------------------------
-        # Adjust height range: 0.20-0.46m (Go2 default is 0.35m)
-        # Adjust roll/pitch ranges based on real robot capabilities (from rosbag analysis):
-        # - Real robot can achieve: roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
-        # - Training with margin: roll ±45°, pitch ±25°
         import math
         self.commands.base_velocity_pose.ranges.height = (0.20, 0.46)
-        self.commands.base_velocity_pose.ranges.roll = (-math.pi/4, math.pi/4)  # ±45° (was ±30°)
-        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)  # ±25° (was not set)
-        # Keep default height at 0.35m (middle of range)
+        self.commands.base_velocity_pose.ranges.roll = (-math.pi/4, math.pi/4)  
+        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)  
         self.commands.base_velocity_pose.default_height = 0.35
         
-        # RE-ENABLE curriculum for training (needed for Stage 1 reward disabling)
-        # Curriculum will control command ranges and enable/disable pose rewards during training
-        # Note: For inference/testing, you can disable curriculum after training is complete
-        # self.curriculum.command_curriculum_height_pose = None  # <-- Commented out for training
+        
         print("[Config] Curriculum enabled for flat terrain training (Stage 1-4)")
 
         # ------------------------------Terrain and Sensors------------------------------
@@ -49,42 +41,28 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
         self.observations.policy.height_scan = None
         self.observations.critic.height_scan = None
         
-        # No terrain curriculum on flat terrain
-        # But KEEP the height/pose curriculum for Stage 2+
         self.curriculum.terrain_levels = None
-        # curriculum.command_curriculum_height_pose is kept from parent config
         
         # ------------------------------Disable VelocityPose-specific Rewards for Stage 1------------------------------
-        # Stage 1 (0-14,500): These rewards are disabled for basic training
-        # Stage 2+ (14,500+): Will be automatically enabled by curriculum
-        
-        # Height tracking reward - will be enabled in Stage 2
         if hasattr(self.rewards, "track_height_exp"):
             reward_term = getattr(self.rewards, "track_height_exp", None)
             if reward_term is not None:
-                # Keep enabled for curriculum learning
-                pass  # Don't disable, let it work from the start
+                pass  
         
-        # Orientation tracking reward - will be enabled in Stage 2
         if hasattr(self.rewards, "track_orientation_exp"):
             reward_term = getattr(self.rewards, "track_orientation_exp", None)
             if reward_term is not None:
-                # Keep enabled for curriculum learning
-                pass  # Don't disable, let it work from the start
+                pass 
         
-        # Z-axis linear acceleration penalty - enable for smooth height changes
         if hasattr(self.rewards, "base_lin_acc_z_l2"):
             reward_term = getattr(self.rewards, "base_lin_acc_z_l2", None)
             if reward_term is not None:
-                # Keep enabled for smooth motion
-                pass  # Don't disable
+                pass  
         
-        # Roll/pitch angular acceleration penalty - enable for smooth orientation changes
         if hasattr(self.rewards, "base_ang_acc_xy_l2"):
             reward_term = getattr(self.rewards, "base_ang_acc_xy_l2", None)
             if reward_term is not None:
-                # Keep enabled for smooth motion
-                pass  # Don't disable
+                pass  
         
         # Disable conditional velocity penalties if they exist (replaced by acceleration penalties)
         if hasattr(self.rewards, "lin_vel_z_penalty_conditional"):
@@ -97,35 +75,20 @@ class UnitreeGo2VelocityPoseFlatEnvCfg(UnitreeGo2VelocityPoseRoughEnvCfg):
             if reward_term is not None:
                 reward_term.weight = 0
         
-        # ------------------------------Keep 6D Command-Aware Rewards------------------------------
-        # These rewards are KEPT (they use 6D commands but only penalize when appropriate):
-        # - stand_still_full_cmd: Uses all 6D commands to determine "truly static"
-        # - joint_pos_penalty_full_cmd: Uses all 6D commands to determine motion state
-        # - track_lin_vel_xy_exp: Basic velocity tracking (weights from parent)
-        # - track_ang_vel_z_exp: Basic angular velocity tracking (weights from parent)
-        
-        # Note: The base_height_l2 reward uses world coordinates on flat terrain
+        # ------------------------------Keep Command-Aware Rewards------------------------------
         self.rewards.base_height_l2.params["sensor_cfg"] = None
         
-        # VelocityPose-specific: track_height_exp also needs to use world coordinates on flat terrain
         if hasattr(self.rewards, "track_height_exp"):
             self.rewards.track_height_exp.params["sensor_cfg"] = None
-        
-        # IMPORTANT: Explicitly ensure VelocityPose tracking rewards are NOT disabled
-        # Force-enable them even if disable_zero_weight_rewards might interfere
         if hasattr(self.rewards, "track_height_exp"):
             print(f"[Config] track_height_exp weight: {self.rewards.track_height_exp.weight}")
         if hasattr(self.rewards, "track_orientation_exp"):
             print(f"[Config] track_orientation_exp weight: {self.rewards.track_orientation_exp.weight}")
 
-        # If the weight of rewards is 0, set rewards to None
-        # BUT: Skip VelocityPose tracking rewards to prevent disabling them
         if self.__class__.__name__ == "UnitreeGo2VelocityPoseFlatEnvCfg":
-            # Store VelocityPose rewards before calling disable
             height_reward = getattr(self.rewards, "track_height_exp", None)
             orient_reward = getattr(self.rewards, "track_orientation_exp", None)
             
-            # Call the disable function
             self.disable_zero_weight_rewards()
             
             # Restore VelocityPose rewards if they were removed

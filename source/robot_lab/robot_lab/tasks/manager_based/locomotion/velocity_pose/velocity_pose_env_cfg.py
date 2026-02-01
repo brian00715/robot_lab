@@ -37,16 +37,16 @@ class VelocityPoseCommandsCfg:
         heading_command=True,
         heading_control_stiffness=0.5,
         debug_vis=True,
-        default_height=0.35,  # Will be overridden in specific robot configs
+        default_height=0.35,  
         ranges=mdp.UniformVelocityPoseCommandCfg.Ranges(
             lin_vel_x=(-1.0, 1.0),
             lin_vel_y=(-1.0, 1.0),
             ang_vel_z=(-1.0, 1.0),
             heading=(-math.pi, math.pi),
-            # For curriculum learning, set height and pose ranges to zero initially
-            height=(0.0, 0.0),  # Will use default_height
-            roll=(0.0, 0.0),    # Will use 0.0
-            pitch=(0.0, 0.0),   # Will use 0.0
+            
+            height=(0.0, 0.0),
+            roll=(0.0, 0.0),
+            pitch=(0.0, 0.0), 
         ),
     )
 
@@ -64,46 +64,36 @@ class LocomotionVelocityPoseRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
     def __post_init__(self):
         """Post initialization."""
-        # Call parent post init
         super().__post_init__()
-        
         # Update observations to include the new command dimensions
-        # The velocity_commands observation now includes [lin_vel_x, lin_vel_y, ang_vel_z, height, roll, pitch]
         if self.observations.policy.velocity_commands is not None:
             self.observations.policy.velocity_commands.params["command_name"] = "base_velocity_pose"
         if self.observations.critic.velocity_commands is not None:
             self.observations.critic.velocity_commands.params["command_name"] = "base_velocity_pose"
         
-        # Update reward terms that reference commands
         if hasattr(self.rewards, "track_lin_vel_xy_exp") and self.rewards.track_lin_vel_xy_exp is not None:
             self.rewards.track_lin_vel_xy_exp.params["command_name"] = "base_velocity_pose"
-            # Override to use Yaw-Aligned Frame (Point Frame B) for STRICT tracking
-            # Linear velocity commands (vx, vy) are defined in Point Frame B (motion direction frame)
-            # NOT in Body Frame C which includes roll/pitch effects
             from robot_lab.tasks.manager_based.locomotion.velocity.mdp import rewards as velocity_rewards
             self.rewards.track_lin_vel_xy_exp.func = velocity_rewards.track_lin_vel_xy_yaw_frame_exp
         if hasattr(self.rewards, "track_ang_vel_z_exp") and self.rewards.track_ang_vel_z_exp is not None:
             self.rewards.track_ang_vel_z_exp.params["command_name"] = "base_velocity_pose"
-            # Override to use World Frame Z-axis for STRICT Point Frame B tracking
-            # This ensures angular velocity tracks the motion direction change (yaw in world)
-            # rather than body rotation, especially important when robot is tilted
             from robot_lab.tasks.manager_based.locomotion.velocity.mdp import rewards as velocity_rewards
             self.rewards.track_ang_vel_z_exp.func = velocity_rewards.track_ang_vel_z_world_exp
-        if hasattr(self.rewards, "stand_still") and self.rewards.stand_still is not None:
-            self.rewards.stand_still.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "joint_pos_penalty") and self.rewards.joint_pos_penalty is not None:
-            self.rewards.joint_pos_penalty.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "wheel_vel_penalty") and self.rewards.wheel_vel_penalty is not None:
-            self.rewards.wheel_vel_penalty.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_air_time") and self.rewards.feet_air_time is not None:
-            self.rewards.feet_air_time.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_gait") and self.rewards.feet_gait is not None:
-            self.rewards.feet_gait.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_contact") and self.rewards.feet_contact is not None:
-            self.rewards.feet_contact.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_contact_without_cmd") and self.rewards.feet_contact_without_cmd is not None:
-            self.rewards.feet_contact_without_cmd.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_height") and self.rewards.feet_height is not None:
-            self.rewards.feet_height.params["command_name"] = "base_velocity_pose"
-        if hasattr(self.rewards, "feet_height_body") and self.rewards.feet_height_body is not None:
-            self.rewards.feet_height_body.params["command_name"] = "base_velocity_pose"
+        
+        command_aware_rewards = [
+            "stand_still",
+            "joint_pos_penalty",
+            "wheel_vel_penalty",
+            "feet_air_time",
+            "feet_gait",
+            "feet_contact",
+            "feet_contact_without_cmd",
+            "feet_height",
+            "feet_height_body",
+        ]
+        
+        for reward_name in command_aware_rewards:
+            if hasattr(self.rewards, reward_name):
+                reward_term = getattr(self.rewards, reward_name)
+                if reward_term is not None:
+                    reward_term.params["command_name"] = "base_velocity_pose"

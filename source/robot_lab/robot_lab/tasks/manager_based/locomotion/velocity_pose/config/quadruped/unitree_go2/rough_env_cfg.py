@@ -41,13 +41,9 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # ------------------------------Commands------------------------------
         # Set default height for Go2 (approximately 0.33m)
         self.commands.base_velocity_pose.default_height = 0.33
-        # Stage 3-4 ranges for inference/play mode: test full pose control capability
-        # Based on real robot capabilities from rosbag analysis (2026-01-28):
-        # - Real robot achieved: roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
-        # - Training with margin for robustness: roll ±45°, pitch ±25°
-        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  # ±10cm (Stage 3 range)
-        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)   # ±45° (was ±20°)
-        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)  # ±25° (was ±12°)
+        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  
+        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)   
+        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436) 
 
         # ------------------------------Observations------------------------------
         self.observations.policy.base_lin_vel.scale = 2.0
@@ -158,39 +154,26 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
 
         # Velocity-tracking rewards (existing)
         self.rewards.track_lin_vel_xy_exp.weight = 6.0  
-        # Increased weight and reduced tolerance to prevent self-spinning during pose/height adjustments
-        # This reward directly uses IMU angular velocity - deployable on real robot without localization
-        self.rewards.track_ang_vel_z_exp.weight = 6.0  
+        self.rewards.track_ang_vel_z_exp.weight = 8.0  
         self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.05)  
         
-        # New: Height tracking reward with exponential growth
-        # NOTE: Parameters (std, weight) will be dynamically adjusted by curriculum learning
-        # Initial values are placeholders - curriculum will override based on stage:
-        #   Stage 3 (0-15k): weight=3.0, std=sqrt(0.05)≈0.22m
-        #   Stage 4 (15k+):  weight=4.0, std=sqrt(0.05)≈0.22m
         self.rewards.track_height_exp = RewTerm(
             func=mdp.track_height_exp,
-            weight=2.0,  # Placeholder - will be updated by curriculum
+            weight=2.0,  
             params={
                 "command_name": "base_velocity_pose",
-                "std": math.sqrt(0.25),  # Placeholder - will be updated by curriculum
+                "std": math.sqrt(0.25), 
                 "sensor_cfg": SceneEntityCfg("height_scanner_base"),
             }
         )
         
-        # New: Orientation tracking reward (roll and pitch only, yaw ignored) with exponential growth
-        # NOTE: This uses track_orientation_exp_without_yaw to decouple from localization systems
-        # Only tracks roll and pitch (yaw is hardcoded to 0°) - can be determined from IMU gravity projection
-        # Parameters (std, weight) will be dynamically adjusted by curriculum learning
-        # Initial values are placeholders - curriculum will override based on stage:
-        #   Stage 3 (0-15k): weight=1.5, std=sqrt(0.10)≈0.316rad (18°)
-        #   Stage 4 (15k+):  weight=2.0, std=sqrt(0.10)≈0.316rad (18°)
+
         self.rewards.track_orientation_exp = RewTerm(
-            func=mdp.track_orientation_exp_without_yaw,  # CHANGED: Use no-yaw version
-            weight=1.0,  # Placeholder - will be updated by curriculum
+            func=mdp.track_orientation_exp_without_yaw,  
+            weight=1.0,  
             params={
                 "command_name": "base_velocity_pose",
-                "std": math.sqrt(0.5),  # Placeholder - will be updated by curriculum
+                "std": math.sqrt(0.5), 
             }
         )
 
@@ -217,9 +200,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_gait.weight = 0.5
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
-        self.rewards.upward.weight = 1.0  # Placeholder - controlled by curriculum (Stage 1: 1.0, Stage 2-4: 0.0)
-
-        # If the weight of rewards is 0, set rewards to None
+        self.rewards.upward.weight = 1.0  
         if self.__class__.__name__ == "UnitreeGo2VelocityPoseRoughEnvCfg":
             self.disable_zero_weight_rewards()
 
@@ -232,12 +213,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.curriculum.command_levels_lin_vel = None
         self.curriculum.command_levels_ang_vel = None
         
-        # Enable stage-based curriculum for height and pose commands
-        # This curriculum automatically switches between 4 stages based on training iterations:
-        # - Stage 1 (0-20k): Fixed at default (no height/pose variation, upward reward enabled)
-        # - Stage 2 (20k-30k): Small ranges (±3cm height, ±8° roll, 0° pitch, upward disabled)
-        # - Stage 3 (30k-45k): Medium ranges (±10cm height, ±35° roll, ±20° pitch)
-        # - Stage 4 (45k+): Large ranges (±12.5cm height, ±45° roll, ±25° pitch) - based on real robot
+        
         from isaaclab.managers import CurriculumTermCfg as CurrTerm
         self.curriculum.command_curriculum_height_pose = CurrTerm(
             func=mdp.command_curriculum_height_pose,

@@ -44,17 +44,6 @@ def track_height_exp(
         
     Returns:
         Reward values with shape (num_envs,)
-        
-    Design Intent:
-        - Exponential growth: smaller errors get exponentially higher rewards
-        - More sensitive than squared error version
-        - Resolves learning conflicts caused by original lin_vel_z_l2 penalty
-        
-    Reward Characteristics:
-        - Error = 0.00m: reward = 1.00 (perfect)
-        - Error = 0.02m: reward ≈ 0.67 (good)
-        - Error = 0.05m (=std): reward ≈ 0.37 (acceptable)
-        - Error = 0.10m: reward ≈ 0.14 (poor)
     """
     asset: RigidObject = env.scene[asset_cfg.name]
     
@@ -298,28 +287,6 @@ def track_orientation_exp_without_yaw(
     Returns:
         Reward values with shape (num_envs,)
         
-    Design Intent:
-        - Use quaternion math in yaw-aligned frame (Point Frame B)
-        - Only tracks roll and pitch (yaw is IGNORED)
-        - More accurate than angle decomposition (no coupling errors)
-        - Exponential reward function for sensitivity to small errors
-        - Decoupled from localization systems (no yaw requirement)
-        
-    Reward Characteristics:
-        - Angle error = 0.00rad (0°): reward = 1.00 (perfect)
-        - Angle error = 0.05rad (2.9°): reward ≈ 0.72 (good)
-        - Angle error = 0.15rad (8.6°, =std): reward ≈ 0.37 (acceptable)
-        - Angle error = 0.30rad (17.2°): reward ≈ 0.14 (poor)
-        
-    Implementation:
-        1. Extract target [roll, pitch] from 7D command (indices 4, 5) - yaw ignored
-        2. Convert to target quaternion with yaw=0 in Point Frame B
-        3. Get current base quaternion in World Frame A
-        4. Extract motion direction (yaw_motion) from World Frame A
-        5. Project current quaternion to Point Frame B by removing motion direction
-        6. Compute quaternion error between target and current (both in Point Frame B)
-        7. Extract rotation angle from error quaternion
-        8. Apply exponential reward based on angle error
     """
     from isaaclab.utils.math import quat_from_euler_xyz, quat_mul, quat_conjugate
     
