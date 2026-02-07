@@ -792,3 +792,233 @@ def feet_contact_without_cmd_full(
     penalty *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     
     return penalty
+
+
+def accumulated_ang_vel_penalty_when_standing(
+    env: ManagerBasedRLEnv,
+    command_name: str = "base_velocity_pose",
+    velocity_threshold: float = 0.1,
+    angle_std: float = 0.25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize accumulated angular velocity when standing with EXPONENTIAL penalty (deployable to real robot).
+    
+    This function tracks the INTEGRAL of angular velocity during standing, which represents
+    accumulated rotation. Unlike heading_deviation_penalty, this does NOT require world-frame
+    yaw angle, making it fully deployable to real robots with only IMU.
+    
+    ACTIVATION CONDITIONS (ALL must be satisfied):
+        1. Curriculum stage >= 2 (disabled in stage 0 and 1)
+        2. Robot is grounded (at least 2 feet in contact with ground)
+        3. Linear velocity command ≈ 0 (vx, vy < velocity_threshold)
+        4. Standing duration > 0.5 seconds (avoid transient effects)
+    
+    Design Rationale:
+    - Real robot IMU provides: angular velocity (gyroscope) ✅
+    - Real robot IMU does NOT provide: absolute yaw angle ❌
+    - Accumulated angular velocity = integral of ωz over time
+    - This captures the same "self-spinning" behavior without needing global coordinates
+    - Stage-based activation ensures basic locomotion skills are learned first
+    - Ground contact check prevents penalizing aerial rotations
+    
+    Mathematical Formulation:
+        accumulated_angle = ∫ωz·dt (during standing)
+        penalty = -(exp(|accumulated_angle| / angle_std) - 1)
+        
+    Exponential Growth Property with angle_std control:
+        - angle_std controls the sensitivity of the exponential penalty
+        - Smaller angle_std → faster exponential growth → stricter control
+        - Larger angle_std → slower exponential growth → gentler control
+        - For 10° target: recommend angle_std = 0.15~0.25 (8.6°~14.3°)
+    
+    Args:
+        env: Environment instance
+        command_name: Name of the velocity-pose command
+        velocity_threshold: Threshold for linear velocity to be considered "standing" (m/s)
+                          - Only checks vx and vy, ignores vz
+                          - Recommended: 0.05 m/s
+        angle_std: Standard deviation controlling penalty sensitivity (rad)
+                   - For 10° (0.175 rad) target, use angle_std=0.15-0.20
+                   - Smaller angle_std = stricter, larger angle_std = gentler
+        asset_cfg: Robot asset configuration
+        
+    Returns:
+        Penalty tensor (num_envs,), negative values when accumulated rotation is large
+        Zero penalty if curriculum stage < 2
+        
+    Penalty Characteristics with angle_std=0.175 (10°) - RECOMMENDED for 10° target:
+        - Accumulated ωz = 0 rad (0°):       penalty = 0
+        - Accumulated ωz = 0.1 rad (5.7°):   penalty ≈ -0.76  (moderate)
+        - Accumulated ωz = 0.175 rad (10°):  penalty ≈ -1.72  (strong) ← matches angle_std (10°)
+        - Accumulated ωz = 0.35 rad (20°):   penalty ≈ -6.39  (very strong) ← 2x target
+        - Accumulated ωz = 0.5 rad (28.6°):  penalty ≈ -14.15 (extreme!)
+        
+    Advantages:
+        - ✅ Fully deployable (only uses IMU angular velocity)
+        - ✅ No need for world-frame reference
+        - ✅ Works in both simulation and real robot
+        - ✅ EXPONENTIAL penalty makes large deviations extremely costly
+        - ✅ angle_std parameter allows fine-tuning penalty sensitivity
+        - ✅ Curriculum-aware: activates only when robot has basic skills
+        - ✅ Ground-contact aware: only penalizes when robot is grounded
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # CRITICAL: Check curriculum stage - MUST be >= 2 to activate
+    # This prevents the penalty from interfering with basic locomotion learning in Stage 1
+    current_stage = getattr(env, "_curriculum_stage", 0)
+    if current_stage < 2:
+        # Return zero penalty immediately if Stage < 2
+        return torch.zeros(env.num_envs, device=env.device)
+    
+    # Get velocity command
+    command = env.command_manager.get_command(command_name)
+    
+    # Check if robot is grounded (all feet touching ground)
+    # Get contact sensor data
+    contact_sensor = env.scene.sensors.get("contact_forces", None)
+    if contact_sensor is not None:
+        # net_forces_w_history shape: (num_envs, history_length, num_bodies, 3)
+        # We only need the most recent forces: [:, 0, :, :]
+        net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, :, :]  # (num_envs, num_bodies, 3)
+        # Check if any foot has contact (force magnitude > threshold)
+        force_threshold = 1.0  # N
+        foot_contact = torch.norm(net_contact_forces, dim=-1) > force_threshold  # (num_envs, num_bodies)
+        # Robot is grounded if at least 2 feet are in contact
+        num_feet_contact = foot_contact.sum(dim=-1)  # (num_envs,)
+        is_grounded = num_feet_contact >= 2  # (num_envs,)
+    else:
+        # Fallback: assume always grounded if no contact sensor
+        is_grounded = torch.ones(env.num_envs, device=env.device, dtype=torch.bool)
+    
+    # Check BOTH linear velocity command AND angular velocity command
+    # CRITICAL: Must check angular velocity command (ωz) as well!
+    # Only penalize self-spinning when robot is commanded to stand still (no rotation)
+    lin_vel_cmd = command[:, :2]  # (num_envs, 2) - [vx, vy]
+    ang_vel_cmd = command[:, 2]    # (num_envs,) - [ωz]
+    lin_vel_cmd_norm = torch.norm(lin_vel_cmd, dim=1)  # (num_envs,)
+    ang_vel_cmd_abs = torch.abs(ang_vel_cmd)  # (num_envs,)
+    
+    # Determine if robot should be standing still
+    # Condition: linear velocity command ≈ 0 AND angular velocity command ≈ 0 AND robot is grounded
+    is_standing_command = (lin_vel_cmd_norm < velocity_threshold) & (ang_vel_cmd_abs < velocity_threshold)
+    is_standing = is_standing_command & is_grounded  # (num_envs,)
+    
+    # Get current angular velocity (body frame, IMU can measure this!)
+    ang_vel_z = asset.data.root_ang_vel_b[:, 2]  # (num_envs,)
+    
+    # Initialize accumulators if not exist
+    if not hasattr(env, "_accumulated_ang_vel_local"):
+        env._accumulated_ang_vel_local = torch.zeros(env.num_envs, device=env.device)
+        env._standing_time_local = torch.zeros(env.num_envs, device=env.device)
+    
+    # CRITICAL: Detect episode reset (when episode just started)
+    # Reset accumulators for environments that just reset
+    # episode_length_buf tracks how many steps have elapsed in current episode
+    # When it's 0 or 1, the episode just started/reset
+    just_reset = env.episode_length_buf <= 1  # (num_envs,) bool tensor
+    
+    # Time step
+    dt = env.step_dt
+    
+    # CRITICAL: Update accumulated angular velocity with THREE reset conditions:
+    # 1. Episode just reset (just_reset=True) -> Reset to zero
+    # 2. Command is non-zero (not standing) -> Reset to zero  
+    # 3. Standing command is active -> Continue accumulating
+    env._accumulated_ang_vel_local = torch.where(
+        just_reset,
+        torch.zeros_like(env._accumulated_ang_vel_local),  # Reset when episode resets
+        torch.where(
+            is_standing,
+            env._accumulated_ang_vel_local + ang_vel_z * dt,  # Accumulate during standing
+            torch.zeros_like(env._accumulated_ang_vel_local)   # Reset when moving
+        )
+    )
+    
+    # Track standing time (reset when not standing OR when episode resets)
+    env._standing_time_local = torch.where(
+        just_reset,
+        torch.zeros_like(env._standing_time_local),  # Reset when episode resets
+        torch.where(
+            is_standing,
+            env._standing_time_local + dt,  # Continue timing during standing
+            torch.zeros_like(env._standing_time_local)  # Reset when moving
+        )
+    )
+    
+    # Exponential penalty with angle_std control on accumulated angular velocity
+    # penalty = -(exp(|accumulated_angle| / angle_std) - 1)
+    # angle_std controls sensitivity: smaller angle_std → stricter penalty
+    #
+    # CRITICAL: Clamp the exponent to prevent numerical overflow AND limit max penalty
+    # Target: penalty should not exceed -200 in magnitude
+    # Math: -(exp(x) - 1) ≥ -200  =>  exp(x) ≤ 201  =>  x ≤ ln(201) ≈ 5.3
+    # We use max_exponent=5.3 to ensure: exp(5.3) ≈ 200, penalty ≈ -199
+    abs_accumulated = torch.abs(env._accumulated_ang_vel_local)
+    exponent = abs_accumulated / angle_std
+    max_exponent = 5.3  # ln(201) ≈ 5.3, ensures penalty magnitude ≤ 200
+    exponent_clamped = torch.clamp(exponent, max=max_exponent)
+    penalty = -(torch.exp(exponent_clamped) - 1.0)  # (num_envs,), range: [0, -199]
+    
+    # Only apply penalty when:
+    # 1. Currently standing
+    # 2. Have been standing for at least 0.5 seconds (avoid transient effects)
+    penalty = torch.where(
+        (is_standing) & (env._standing_time_local > 0.5),
+        penalty,
+        torch.zeros_like(penalty)
+    )
+    
+    # Debug: Print statistics every 100 steps
+    if not hasattr(env, "_accumulated_ang_vel_penalty_debug_counter"):
+        env._accumulated_ang_vel_penalty_debug_counter = 0
+    env._accumulated_ang_vel_penalty_debug_counter += 1
+    if env._accumulated_ang_vel_penalty_debug_counter % 100 == 0:
+        num_standing = is_standing.sum().item()
+        num_grounded = is_grounded.sum().item()
+        num_moving = (~is_standing).sum().item()
+        num_just_reset = just_reset.sum().item()
+        
+        # Calculate command statistics
+        lin_cmd_near_zero = (lin_vel_cmd_norm < velocity_threshold).sum().item()
+        ang_cmd_near_zero = (ang_vel_cmd_abs < velocity_threshold).sum().item()
+        both_cmd_zero = ((lin_vel_cmd_norm < velocity_threshold) & (ang_vel_cmd_abs < velocity_threshold)).sum().item()
+        
+        standing_accumulated = env._accumulated_ang_vel_local[is_standing]
+        standing_time = env._standing_time_local[is_standing]
+        stage_info = f" [Stage {current_stage}]"
+        
+        # Episode length statistics
+        avg_episode_length = env.episode_length_buf.float().mean().item()
+        max_episode_length = env.episode_length_buf.max().item()
+        
+        # Stage status indicator
+        stage_status = "✅ ACTIVE" if current_stage >= 2 else "❌ DISABLED (Stage < 2)"
+        
+        print(f"\n[DEBUG] Accumulated Angular Velocity Penalty Statistics (Step {env._accumulated_ang_vel_penalty_debug_counter}){stage_info}:")
+        print(f"  Curriculum stage:              {current_stage} - {stage_status}")
+        print(f"  angle_std parameter:           {angle_std:.4f} rad ({torch.rad2deg(torch.tensor(angle_std)):.1f}°)")
+        print(f"  Max exponent (clamp limit):    {max_exponent:.2f} (ensures penalty ≤ 200)")
+        print(f"  Episode stats:                 avg_len={avg_episode_length:.1f}, max_len={max_episode_length}, just_reset={num_just_reset}")
+        print(f"  Grounded envs:                 {num_grounded}/{env.num_envs} ({num_grounded*100/env.num_envs:.1f}%)")
+        print(f"  Lin cmd ≈ 0:                   {lin_cmd_near_zero}/{env.num_envs} ({lin_cmd_near_zero*100/env.num_envs:.1f}%)")
+        print(f"  Ang cmd ≈ 0:                   {ang_cmd_near_zero}/{env.num_envs} ({ang_cmd_near_zero*100/env.num_envs:.1f}%)")
+        print(f"  Both cmds ≈ 0:                 {both_cmd_zero}/{env.num_envs} ({both_cmd_zero*100/env.num_envs:.1f}%)")
+        print(f"  Standing envs (all conditions): {num_standing}/{env.num_envs} ({num_standing*100/env.num_envs:.1f}%)")
+        print(f"  Moving envs:                   {num_moving}/{env.num_envs} ({num_moving*100/env.num_envs:.1f}%)")
+        if num_standing > 0:
+            num_active_penalty = ((is_standing) & (env._standing_time_local > 0.5)).sum().item()
+            standing_exponent = exponent[is_standing]
+            standing_exponent_clamped = exponent_clamped[is_standing]
+            num_clamped = (standing_exponent > max_exponent).sum().item()
+            print(f"  Active penalty envs (>0.5s):   {num_active_penalty}/{num_standing} ({num_active_penalty*100/num_standing:.1f}%)")
+            print(f"  Standing time (s):             mean={standing_time.mean().item():.2f}, max={standing_time.max().item():.2f}")
+            print(f"  Accumulated ωz (rad):          mean={standing_accumulated.mean().item():.4f}, std={standing_accumulated.std().item():.4f}, max={standing_accumulated.abs().max().item():.4f}")
+            print(f"  Accumulated ωz (deg):          mean={torch.rad2deg(standing_accumulated).mean().item():.2f}, max={torch.rad2deg(standing_accumulated.abs()).max().item():.2f}")
+            print(f"  Exponent (before clamp):       mean={standing_exponent.mean().item():.2f}, max={standing_exponent.max().item():.2f}")
+            print(f"  Exponent (after clamp):        mean={standing_exponent_clamped.mean().item():.2f}, max={standing_exponent_clamped.max().item():.2f}")
+            print(f"  Clamped envs (exp>{max_exponent:.1f}):     {num_clamped}/{num_standing} ({num_clamped*100/num_standing:.1f}%)")
+            print(f"  Standing penalty:              mean={penalty[is_standing].mean().item():.6f}, min={penalty[is_standing].min().item():.6f}")
+        print(f"  Overall penalty:               mean={penalty.mean().item():.6f}, min={penalty.min().item():.6f}, max={penalty.max().item():.6f}")
+    
+    return penalty

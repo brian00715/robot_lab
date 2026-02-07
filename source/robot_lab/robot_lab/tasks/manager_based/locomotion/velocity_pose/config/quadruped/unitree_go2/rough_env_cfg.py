@@ -154,7 +154,7 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
 
         # Velocity-tracking rewards (existing)
         self.rewards.track_lin_vel_xy_exp.weight = 6.0  
-        self.rewards.track_ang_vel_z_exp.weight = 8.0  
+        self.rewards.track_ang_vel_z_exp.weight = 6.0  
         self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.05)  
         
         self.rewards.track_height_exp = RewTerm(
@@ -174,6 +174,19 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             params={
                 "command_name": "base_velocity_pose",
                 "std": math.sqrt(0.5), 
+            }
+        )
+
+        # Anti-spinning reward: accumulated angular velocity penalty (deployable with IMU-only)
+        # For 10° (0.175 rad) target: use angle_std=0.175, weight=3.0 to 4.0
+        # NOTE: Penalty function returns negative values, so weight should be POSITIVE
+        self.rewards.accumulated_ang_vel_standing = RewTerm(
+            func=mdp.accumulated_ang_vel_penalty_when_standing,
+            weight=4.0,  # Penalty weight: increase if still spinning, decrease if too strict
+            params={
+                "command_name": "base_velocity_pose",
+                "velocity_threshold": 0.05,  # m/s, threshold for "standing still"
+                "angle_std": math.radians(10),  # 10° = 0.175 rad - controls penalty sensitivity
             }
         )
 

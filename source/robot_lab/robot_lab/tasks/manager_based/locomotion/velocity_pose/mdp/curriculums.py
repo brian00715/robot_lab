@@ -63,6 +63,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     except (AttributeError, KeyError):
         upward_cfg = None
     
+    # Try to get accumulated angular velocity penalty (anti-spinning when standing)
+    try:
+        accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
+    except (AttributeError, KeyError):
+        accumulated_ang_vel_cfg = None
+    
     # Stage 1: Disable pose tracking rewards, enable locomotion penalties and upward reward
     if stage == 1:
         if height_reward_cfg:
@@ -83,6 +89,11 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Enable upward reward in Stage 1 to maintain stability during basic locomotion learning
         if upward_cfg:
             upward_cfg.weight = 1.0
+        
+        # Accumulated angular velocity penalty: DISABLED in Stage 1
+        # (let robot learn basic locomotion first)
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 0.0
     
     # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties and upward
     elif stage == 2:
@@ -106,6 +117,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # CRITICAL: Disable upward reward from Stage 2 onwards (conflicts with pose tracking)
         if upward_cfg:
             upward_cfg.weight = 0.0
+        
+        # Accumulated angular velocity penalty: VERY GENTLE in Stage 2
+        # NOTE: Function returns negative values, so weight should be POSITIVE
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 0.5  
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(20)  
     
     # Stage 3: Strict tracking with high weight, upward remains disabled
     elif stage == 3:
@@ -128,6 +145,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
+        
+        # Accumulated angular velocity penalty: GENTLE in Stage 3
+        # NOTE: Function returns negative values, so weight should be POSITIVE
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 1.0
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(15)  
     
     # Stage 4: Very strict tracking with very high weight, upward remains disabled
     elif stage == 4:
@@ -142,7 +165,7 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         
         # Yaw control: very strict tolerance (near-zero yaw drift tolerance)
         if ang_vel_z_tracking_cfg:
-            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.015)  
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.01)  
         
         # Keep locomotion penalties disabled
         if lin_vel_z_l2_cfg:
@@ -153,6 +176,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
+        
+        # Anti-spin when standing: moderate control (10° tolerance)
+        # NOTE: Function returns negative values, so weight should be POSITIVE
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 1.5
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(10)  # 10° moderate tolerance
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
@@ -209,6 +238,15 @@ def _print_reward_parameters(env: ManagerBasedRLEnv):
         print(f"    upward:                 weight={upward_weight:.2f}")
     except (AttributeError, KeyError):
         print("    upward:                 Not configured")
+    
+    # Print anti-spin penalty when standing
+    try:
+        accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
+        accumulated_weight = accumulated_ang_vel_cfg.weight
+        angle_std = accumulated_ang_vel_cfg.params.get("angle_std", 0.0)
+        print(f"    accumulated_ang_vel_standing: weight={accumulated_weight:.1f}, angle_std={angle_std:.3f} ({math.degrees(angle_std):.1f}°)")
+    except (AttributeError, KeyError):
+        print("    accumulated_ang_vel_standing: Not configured")
 
 
 def terrain_levels_velocity_pose(
