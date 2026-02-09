@@ -6,7 +6,7 @@ from robot_lab.assets import ISAACLAB_ASSETS_DATA_DIR
 
 GO2_X5_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/arx_x5/usd/go2_x5/go2_x5.usd",
+        usd_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/unitree/go2_x5_description/usd/go2_x5/go2_x5.usd",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,

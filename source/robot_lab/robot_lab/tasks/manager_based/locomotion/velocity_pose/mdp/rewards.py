@@ -814,8 +814,8 @@ def accumulated_ang_vel_penalty_when_standing(
         4. Standing duration > 0.5 seconds (avoid transient effects)
     
     Design Rationale:
-    - Real robot IMU provides: angular velocity (gyroscope) ✅
-    - Real robot IMU does NOT provide: absolute yaw angle ❌
+    - Real robot IMU provides: angular velocity (gyroscope) 
+    - Real robot IMU does NOT provide: absolute yaw angle 
     - Accumulated angular velocity = integral of ωz over time
     - This captures the same "self-spinning" behavior without needing global coordinates
     - Stage-based activation ensures basic locomotion skills are learned first
@@ -854,13 +854,13 @@ def accumulated_ang_vel_penalty_when_standing(
         - Accumulated ωz = 0.5 rad (28.6°):  penalty ≈ -14.15 (extreme!)
         
     Advantages:
-        - ✅ Fully deployable (only uses IMU angular velocity)
-        - ✅ No need for world-frame reference
-        - ✅ Works in both simulation and real robot
-        - ✅ EXPONENTIAL penalty makes large deviations extremely costly
-        - ✅ angle_std parameter allows fine-tuning penalty sensitivity
-        - ✅ Curriculum-aware: activates only when robot has basic skills
-        - ✅ Ground-contact aware: only penalizes when robot is grounded
+        - Fully deployable (only uses IMU angular velocity)
+        - No need for world-frame reference
+        - Works in both simulation and real robot
+        - EXPONENTIAL penalty makes large deviations extremely costly
+        - angle_std parameter allows fine-tuning penalty sensitivity
+        - Curriculum-aware: activates only when robot has basic skills
+        - Ground-contact aware: only penalizes when robot is grounded
     """
     asset: Articulation = env.scene[asset_cfg.name]
     
@@ -1022,3 +1022,303 @@ def accumulated_ang_vel_penalty_when_standing(
         print(f"  Overall penalty:               mean={penalty.mean().item():.6f}, min={penalty.min().item():.6f}, max={penalty.max().item():.6f}")
     
     return penalty
+
+##
+# ARX5 Arm Stability and Anti-Flip Rewards (Stage 1)
+##
+
+
+def combined_com_stability_reward(
+    env: ManagerBasedRLEnv,
+    dog_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    dog_mass: float = 15.0,
+    arm_mass: float = 3.0,
+    target_com_offset: tuple = (0.0, 0.0, 0.0),
+    std: float = 0.10,
+    arm_body_names: list[str] = ["link1", "link2", "link3", "link4", "link5", "link6"],
+) -> torch.Tensor:
+    """Reward for keeping combined CoM (dog + arm) close to target position.
+    
+    The combined center of mass should ideally be above the dog's base to maintain stability.
+    
+    Args:
+        env: Environment instance.
+        dog_cfg: Dog asset configuration.
+        dog_mass: Total mass of the dog (kg).
+        arm_mass: Total mass of the arm (kg).
+        target_com_offset: Target CoM offset from base (x, y, z) in meters.
+        std: Standard deviation for exponential reward (m).
+        arm_body_names: Names of arm link bodies.
+    
+    Returns:
+        Reward values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[dog_cfg.name]
+    
+    # Approximate dog CoM as base position
+    dog_com = asset.data.root_pos_w
+    
+    # Calculate arm CoM as average of all link positions
+    try:
+        arm_body_indices = [asset.find_bodies(name)[0][0] for name in arm_body_names]
+        arm_link_positions = torch.stack([
+            asset.data.body_pos_w[:, idx, :] for idx in arm_body_indices
+        ], dim=1)  # (num_envs, num_links, 3)
+        arm_com = arm_link_positions.mean(dim=1)  # (num_envs, 3)
+    except:
+        # Fallback if arm bodies not found
+        arm_com = dog_com
+    
+    # Calculate combined CoM
+    total_mass = dog_mass + arm_mass
+    combined_com = (dog_mass * dog_com + arm_mass * arm_com) / total_mass
+    
+    # Calculate offset from base
+    com_offset = combined_com - dog_com
+    
+    # Target offset
+    target = torch.tensor(target_com_offset, device=env.device, dtype=torch.float32)
+    
+    # Calculate error
+    error = torch.norm(com_offset - target, dim=-1)
+    
+    # Exponential reward
+    reward = torch.exp(-error / std)
+    
+    return reward
+
+
+def base_stability_reward(
+    env: ManagerBasedRLEnv,
+    lin_acc_std: float = 3.0,
+    ang_acc_std: float = 5.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward smooth base motion by penalizing large accelerations.
+    
+    Args:
+        env: Environment instance.
+        lin_acc_std: Standard deviation for linear acceleration (m/s²).
+        ang_acc_std: Standard deviation for angular acceleration (rad/s²).
+        asset_cfg: Asset configuration.
+    
+    Returns:
+        Reward values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get linear acceleration (approximate from velocity change)
+    if hasattr(asset.data, 'root_lin_acc_w'):
+        lin_acc = asset.data.root_lin_acc_w
+    else:
+        # Fallback: approximate from velocity
+        lin_acc = torch.zeros(env.num_envs, 3, device=env.device)
+    
+    # Get angular velocity change as proxy for angular acceleration
+    ang_vel = asset.data.root_ang_vel_w
+    
+    # Calculate magnitudes
+    lin_acc_mag = torch.norm(lin_acc, dim=-1)
+    ang_vel_mag = torch.norm(ang_vel, dim=-1)
+    
+    # Exponential reward for smooth motion
+    lin_reward = torch.exp(-lin_acc_mag / lin_acc_std)
+    ang_reward = torch.exp(-ang_vel_mag / ang_acc_std)
+    
+    return (lin_reward + ang_reward) / 2.0
+
+
+def feet_contact_force_balance(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+    target_distribution: list[float] = [0.25, 0.25, 0.25, 0.25],
+) -> torch.Tensor:
+    """Reward balanced contact force distribution across all feet.
+    
+    Args:
+        env: Environment instance.
+        sensor_cfg: Contact sensor configuration.
+        target_distribution: Target force distribution for each foot (should sum to 1.0).
+    
+    Returns:
+        Reward values with shape (num_envs,).
+    """
+    contact_sensor = env.scene[sensor_cfg.name]
+    contact_forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    force_magnitudes = torch.norm(contact_forces, dim=-1).max(dim=1)[0]  # (num_envs, num_feet)
+    
+    # Calculate force distribution
+    total_force = force_magnitudes.sum(dim=-1, keepdim=True) + 1e-6  # Avoid division by zero
+    force_distribution = force_magnitudes / total_force  # (num_envs, num_feet)
+    
+    # Target distribution
+    target = torch.tensor(target_distribution, device=env.device, dtype=torch.float32)
+    
+    # Calculate error
+    error = torch.norm(force_distribution - target, dim=-1)
+    
+    # Reward (lower error = higher reward)
+    reward = torch.exp(-error / 0.2)  # std=0.2 for distribution error
+    
+    return reward
+
+
+def anti_flip_orientation_reward(
+    env: ManagerBasedRLEnv,
+    roll_threshold: float = 0.785,   # 45°
+    pitch_threshold: float = 0.524,  # 30°
+    penalize_flip_attempt: bool = True,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Strong penalty for approaching flip/roll-over orientations.
+    
+    This is a critical safety reward to prevent the robot from flipping over,
+    which could damage the arm.
+    
+    Args:
+        env: Environment instance.
+        roll_threshold: Roll angle threshold (rad).
+        pitch_threshold: Pitch angle threshold (rad).
+        penalize_flip_attempt: Whether to strongly penalize approaching the threshold.
+        asset_cfg: Asset configuration.
+    
+    Returns:
+        Reward values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Extract roll and pitch from quaternion
+    quat = asset.data.root_quat_w
+    # Use isaaclab's math utilities
+    from isaaclab.utils.math import quat_to_euler_xyz
+    roll, pitch, _ = quat_to_euler_xyz(quat)
+    
+    # Calculate absolute errors
+    roll_error = torch.abs(roll)
+    pitch_error = torch.abs(pitch)
+    
+    # Normal range: linear reward
+    roll_reward = torch.where(
+        roll_error < roll_threshold * 0.5,
+        1.0 - roll_error / (roll_threshold * 0.5),
+        torch.zeros_like(roll_error)
+    )
+    
+    pitch_reward = torch.where(
+        pitch_error < pitch_threshold * 0.5,
+        1.0 - pitch_error / (pitch_threshold * 0.5),
+        torch.zeros_like(pitch_error)
+    )
+    
+    # Approaching flip: strong penalty
+    if penalize_flip_attempt:
+        roll_penalty = torch.where(
+            roll_error > roll_threshold * 0.7,
+            -(roll_error / roll_threshold - 0.7) * 10.0,
+            torch.zeros_like(roll_error)
+        )
+        
+        pitch_penalty = torch.where(
+            pitch_error > pitch_threshold * 0.7,
+            -(pitch_error / pitch_threshold - 0.7) * 10.0,
+            torch.zeros_like(pitch_error)
+        )
+    else:
+        roll_penalty = 0.0
+        pitch_penalty = 0.0
+    
+    # Combine rewards
+    reward = (roll_reward + pitch_reward) / 2.0 + (roll_penalty + pitch_penalty)
+    
+    # Only activate when robot is upright
+    upright_factor = torch.clamp(-asset.data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    reward = reward * upright_factor
+    
+    return reward
+
+
+def upright_bonus_reward(
+    env: ManagerBasedRLEnv,
+    target_gravity_z: float = -1.0,
+    tolerance: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Bonus reward for maintaining upright orientation.
+    
+    Args:
+        env: Environment instance.
+        target_gravity_z: Target z-component of projected gravity in body frame.
+        tolerance: Tolerance for perfect upright posture.
+        asset_cfg: Asset configuration.
+    
+    Returns:
+        Reward values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get gravity projection in body frame
+    gravity_z = asset.data.projected_gravity_b[:, 2]
+    
+    # Calculate error
+    error = torch.abs(gravity_z - target_gravity_z)
+    
+    # Exponential reward
+    reward = torch.exp(-error / tolerance)
+    
+    return reward
+
+
+def arm_joint_pos_limits(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["joint[1-6]"]),
+    soft_margin: float = 0.1,
+) -> torch.Tensor:
+    """Penalty for arm joints approaching limits.
+    
+    Args:
+        env: Environment instance.
+        asset_cfg: Asset configuration for arm joints.
+        soft_margin: Soft margin as fraction of range (0.1 = 10%).
+    
+    Returns:
+        Penalty values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.resolve_joint_indices(asset_cfg.joint_names, asset)
+    
+    # Get joint positions and limits
+    joint_pos = asset.data.joint_pos[:, joint_ids]
+    joint_limits = asset.data.soft_joint_pos_limits[:, joint_ids, :]
+    
+    # Calculate normalized position in range [-1, 1]
+    joint_range = joint_limits[:, :, 1] - joint_limits[:, :, 0]
+    joint_center = (joint_limits[:, :, 1] + joint_limits[:, :, 0]) / 2.0
+    normalized_pos = (joint_pos - joint_center) / (joint_range / 2.0)
+    
+    # Penalty when outside soft margin
+    soft_threshold = 1.0 - soft_margin
+    penalty = torch.relu(torch.abs(normalized_pos) - soft_threshold)
+    
+    return penalty.sum(dim=-1)
+
+
+def arm_joint_acc_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["joint[1-6]"]),
+) -> torch.Tensor:
+    """L2 penalty on arm joint accelerations for smooth motion.
+    
+    Args:
+        env: Environment instance.
+        asset_cfg: Asset configuration for arm joints.
+    
+    Returns:
+        Penalty values with shape (num_envs,).
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.resolve_joint_indices(asset_cfg.joint_names, asset)
+    
+    # Get joint accelerations
+    joint_acc = asset.data.joint_acc[:, joint_ids]
+    
+    return torch.sum(torch.square(joint_acc), dim=-1)

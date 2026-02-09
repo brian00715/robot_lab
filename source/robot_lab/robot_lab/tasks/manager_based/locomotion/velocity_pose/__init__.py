@@ -10,3 +10,16 @@
 
 These environments extend velocity tracking with height and orientation control.
 """
+
+##
+# Register Gym environments for all robots
+##
+
+# Import all robot-specific registrations
+from .config.quadruped.unitree_go2 import *  # noqa: F401, F403
+from .config.quadruped.unitree_go2_x5 import *  # noqa: F401, F403
+
+# Import environment class
+from .velocity_pose_env import VelocityPoseEnv
+
+__all__ = ["VelocityPoseEnv"]

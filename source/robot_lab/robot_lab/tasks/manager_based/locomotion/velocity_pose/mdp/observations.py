@@ -277,6 +277,126 @@ def last_action_with_height_pose(
         return env.action_manager.get_term(action_name).raw_actions
 
 
+# ========================================
+# ARX5 Arm Observations (Stage 1)
+# ========================================
+
+def arm_joint_pos_rel(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["joint[1-6]"]),
+) -> torch.Tensor:
+    """Arm joint positions relative to default position.
+    
+    Args:
+        env: The RL environment instance.
+        asset_cfg: Asset configuration for arm joints.
+    
+    Returns:
+        Relative joint positions (num_envs, 6) in radians.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get current and default positions
+    joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
+    joint_pos_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    
+    return joint_pos - joint_pos_default
+
+
+def arm_joint_vel_rel(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", joint_names=["joint[1-6]"]),
+) -> torch.Tensor:
+    """Arm joint velocities.
+    
+    Args:
+        env: The RL environment instance.
+        asset_cfg: Asset configuration for arm joints.
+    
+    Returns:
+        Joint velocities (num_envs, 6) in rad/s.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    return asset.data.joint_vel[:, asset_cfg.joint_ids]
+
+
+def arm_end_effector_position_relative(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ee_body_name: str = "link6",
+) -> torch.Tensor:
+    """End effector position relative to robot base.
+    
+    Args:
+        env: The RL environment instance.
+        asset_cfg: Asset configuration.
+        ee_body_name: Name of end effector body.
+    
+    Returns:
+        Relative position (num_envs, 3) in meters.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    
+    # Get base position
+    base_pos = asset.data.root_pos_w
+    
+    # Get end effector position
+    ee_body_idx = asset.find_bodies(ee_body_name)[0][0]
+    ee_pos = asset.data.body_pos_w[:, ee_body_idx, :]
+    
+    # Calculate relative position in base frame
+    rel_pos = ee_pos - base_pos
+    
+    return rel_pos
+
+
+def combined_center_of_mass_offset(
+    env: ManagerBasedRLEnv,
+    dog_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    dog_mass: float = 15.0,
+    arm_mass: float = 3.0,
+    arm_body_names: list[str] = ["link1", "link2", "link3", "link4", "link5", "link6"],
+) -> torch.Tensor:
+    """Combined center of mass offset from robot base.
+    
+    This computes the weighted center of mass of the entire system (dog + arm)
+    relative to the dog's base position.
+    
+    Args:
+        env: The RL environment instance.
+        dog_cfg: Dog asset configuration.
+        dog_mass: Total mass of the dog (kg).
+        arm_mass: Total mass of the arm (kg).
+        arm_body_names: Names of arm link bodies.
+    
+    Returns:
+        CoM offset (num_envs, 3) in meters relative to base.
+    """
+    asset: Articulation = env.scene[dog_cfg.name]
+    
+    # Approximate dog CoM as base position
+    dog_com = asset.data.root_pos_w
+    
+    # Calculate arm CoM as average of all link positions (simplified)
+    arm_body_indices = [asset.find_bodies(name)[0][0] for name in arm_body_names]
+    arm_link_positions = torch.stack([
+        asset.data.body_pos_w[:, idx, :] for idx in arm_body_indices
+    ], dim=1)  # (num_envs, num_links, 3)
+    
+    # Simplified: uniform weight for each link
+    arm_com = arm_link_positions.mean(dim=1)  # (num_envs, 3)
+    
+    # Calculate combined CoM
+    total_mass = dog_mass + arm_mass
+    combined_com = (dog_mass * dog_com + arm_mass * arm_com) / total_mass
+    
+    # Return offset from base
+    com_offset = combined_com - dog_com
+    
+    return com_offset
+
+
 # Re-export common observations from velocity task
 __all__ = [
     # New observations for VelocityPose
@@ -290,6 +410,11 @@ __all__ = [
     "feet_height_relative_to_base",
     "height_scanner_base",
     "last_action_with_height_pose",
+    # ARX5 Arm observations
+    "arm_joint_pos_rel",
+    "arm_joint_vel_rel",
+    "arm_end_effector_position_relative",
+    "combined_center_of_mass_offset",
     # Re-exported from velocity task
     "joint_pos_rel_without_wheel",
     "phase",
