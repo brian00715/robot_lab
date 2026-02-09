@@ -140,8 +140,8 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
                     scale=0.05
                 )  # 12D
                 
-                # Last actions (18D: all joints, but policy only controls 12)
-                actions = ObsTerm(func=mdp.last_action)  # 18D
+                # Last actions (12D: policy controls dog joints only, arm controlled separately)
+                actions = ObsTerm(func=mdp.last_action)  # 12D
                 
                 # ========== ARM OBSERVATIONS (NEW) ==========
                 
@@ -185,7 +185,8 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             # Policy and critic use same observations
             policy: PolicyCfg = PolicyCfg()
         
-        # Total observation dimension: 3+3+3+7+12+12+18+6+6+3+3 = 76D
+        # Total observation dimension: 3+3+3+7+12+12+12+6+6+3+3 = 70D
+        # Note: Flat terrain has 70D (no height_scan), Rough terrain would have 70D+ (with height_scan)
         self.observations = GO2X5ObservationsCfg()
 
         # ========================================
@@ -346,6 +347,68 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.feet_gait.weight = 0.5
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
         self.rewards.upward.weight = 1.0
+        
+        # ========================================
+        # ARM-Specific Stability Rewards (NEW for Stage 1)
+        # ========================================
+        
+        # Combined CoM stability - penalize CoM offset caused by arm movement
+        self.rewards.combined_com_stability = RewTerm(
+            func=mdp.combined_com_stability_reward,
+            weight=3.0,
+            params={
+                "dog_cfg": SceneEntityCfg("robot"),
+                "dog_mass": 15.0,
+                "arm_mass": 3.0,
+                "target_com_offset": (0.0, 0.0, 0.0),
+                "std": 0.10,
+                "arm_body_names": ["link1", "link2", "link3", "link4", "link5", "link6"]
+            }
+        )
+        
+        # Base stability - penalize excessive linear/angular acceleration
+        self.rewards.base_stability = RewTerm(
+            func=mdp.base_stability_reward,
+            weight=2.0,
+            params={
+                "lin_acc_std": 3.0,
+                "ang_acc_std": 5.0,
+                "asset_cfg": SceneEntityCfg("robot")
+            }
+        )
+        
+        # Feet contact force balance - encourage even weight distribution
+        self.rewards.feet_contact_balance = RewTerm(
+            func=mdp.feet_contact_force_balance,
+            weight=1.5,
+            params={
+                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
+                "target_distribution": [0.25, 0.25, 0.25, 0.25]
+            }
+        )
+        
+        # Anti-flip reward - CRITICAL for preventing rollover
+        self.rewards.anti_flip_reward = RewTerm(
+            func=mdp.anti_flip_orientation_reward,
+            weight=5.0,
+            params={
+                "roll_threshold": 0.785,    # 45°
+                "pitch_threshold": 0.524,   # 30°
+                "penalize_flip_attempt": True,
+                "asset_cfg": SceneEntityCfg("robot")
+            }
+        )
+        
+        # Upright bonus - reward staying upright
+        self.rewards.upright_bonus = RewTerm(
+            func=mdp.upright_bonus_reward,
+            weight=2.0,
+            params={
+                "target_gravity_z": -1.0,
+                "tolerance": 0.1,
+                "asset_cfg": SceneEntityCfg("robot")
+            }
+        )
         
         # ========================================
         # Terminations Configuration (Safety-Critical)

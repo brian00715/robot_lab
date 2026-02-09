@@ -1190,8 +1190,8 @@ def anti_flip_orientation_reward(
     # Extract roll and pitch from quaternion
     quat = asset.data.root_quat_w
     # Use isaaclab's math utilities
-    from isaaclab.utils.math import quat_to_euler_xyz
-    roll, pitch, _ = quat_to_euler_xyz(quat)
+    from isaaclab.utils.math import euler_xyz_from_quat
+    roll, pitch, _ = euler_xyz_from_quat(quat)
     
     # Calculate absolute errors
     roll_error = torch.abs(roll)

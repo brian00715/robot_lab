@@ -17,6 +17,9 @@ class UnitreeGo2X5VelocityPoseRoughPPORunnerCfg(UnitreeGo2VelocityPoseRoughPPORu
     def __post_init__(self):
         super().__post_init__()
         
+        # Set correct experiment name for GO2+X5
+        self.experiment_name = "unitree_go2_x5_velocity_pose_rough"
+        
         # Adjust network size for 76D observations
         # Policy network: 76D input → 512 → 256 → 128 → 12D output (dog joints only)
         self.policy.class_name = "ActorCritic"
@@ -44,6 +47,9 @@ class UnitreeGo2X5VelocityPoseFlatPPORunnerCfg(UnitreeGo2X5VelocityPoseRoughPPOR
     
     def __post_init__(self):
         super().__post_init__()
+        
+        # Set correct experiment name for GO2+X5 Flat
+        self.experiment_name = "unitree_go2_x5_velocity_pose_flat"
         
         # Flat terrain can be slightly easier
         self.algorithm.learning_rate = 5e-4
