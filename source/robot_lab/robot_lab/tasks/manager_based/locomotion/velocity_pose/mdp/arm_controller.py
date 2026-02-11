@@ -124,6 +124,17 @@ class ARX5TrajectoryController:
         Returns:
             Arm actions (num_envs, 6) - target joint positions in radians.
         """
+        # Debug: Log first call
+        if not hasattr(self, '_generate_debug_logged'):
+            self._generate_debug_logged = True
+            print(f"\n{'='*80}")
+            print("[DEBUG] ARX5Controller.generate_arm_action() first call:")
+            print(f"  num_envs: {self.num_envs}")
+            print(f"  motion_scale: {self.motion_scale}")
+            print(f"  dt: {self.dt}")
+            print(f"  timesteps: {self.timesteps[:5]}")  # First 5 envs
+            print(f"{'='*80}\n")
+        
         arm_actions = torch.zeros((self.num_envs, 6), device=self.device)
         
         # Compute time in seconds
@@ -355,23 +366,23 @@ def create_arm_controller(
     Returns:
         Initialized ARX5TrajectoryController.
     """
-    # Stage-specific parameters
+    # Stage-specific parameters - INCREASED RANGE for more visible arm motion
     if stage == 1:
-        motion_scale = 0.3
-        frequency_range = (0.2, 0.5)
-        amplitude_range = (0.1, 0.3)
+        motion_scale = 0 
+        frequency_range = (0.3, 0.8)  
+        amplitude_range = (0.3, 0.6)  
     elif stage == 2:
-        motion_scale = 0.6
-        frequency_range = (0.5, 1.0)
-        amplitude_range = (0.2, 0.4)
+        motion_scale = 1.2  
+        frequency_range = (0.5, 1.2)  
+        amplitude_range = (0.4, 0.8) 
     elif stage == 3:
-        motion_scale = 0.9
-        frequency_range = (0.5, 1.5)
-        amplitude_range = (0.3, 0.5)
+        motion_scale = 1.8  
+        frequency_range = (0.8, 1.8)  
+        amplitude_range = (0.5, 1.0)  
     else:  # stage >= 4
-        motion_scale = 1.0
-        frequency_range = (0.5, 2.0)
-        amplitude_range = (0.3, 0.6)
+        motion_scale = 2.5 
+        frequency_range = (1.0, 2.5) 
+        amplitude_range = (0.6, 1.2)
     
     controller = ARX5TrajectoryController(
         num_envs=num_envs,

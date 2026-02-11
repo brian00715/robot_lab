@@ -480,6 +480,67 @@ def command_curriculum_height_pose(
     return torch.tensor(float(target_stage), device=env.device)
 
 
+def arm_randomization_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    threshold_iteration: int = 5000,
+) -> torch.Tensor:
+    """Enable arm randomization after a threshold number of iterations.
+
+    This curriculum function enables arm trajectory motion after the policy
+    has learned basic locomotion skills.
+
+    Args:
+        env: The environment instance.
+        env_ids: Environment indices (not used, but required by curriculum interface).
+        threshold_iteration: Iteration threshold to enable arm randomization.
+
+    Returns:
+        Tensor with current arm randomization state (0=disabled, 1=enabled).
+    """
+    # Get current iteration
+    if hasattr(env, '_curriculum_manual_iteration'):
+        total_iterations = env._curriculum_manual_iteration
+    elif hasattr(env.unwrapped, '_rsl_rl_runner'):
+        runner = env.unwrapped._rsl_rl_runner
+        if hasattr(runner, 'current_learning_iteration'):
+            total_iterations = runner.current_learning_iteration
+        else:
+            total_steps = env.common_step_counter
+            steps_per_iteration = env.num_envs * 24
+            total_iterations = total_steps // steps_per_iteration
+    else:
+        total_steps = env.common_step_counter
+        steps_per_iteration = env.num_envs * 24
+        total_iterations = total_steps // steps_per_iteration
+
+    # Check if we should enable arm randomization
+    should_enable = total_iterations >= threshold_iteration
+
+    # Update flag if it changed
+    if not hasattr(env, '_arm_randomization_enabled'):
+        env._arm_randomization_enabled = False
+
+    if should_enable and not env._arm_randomization_enabled:
+        env._arm_randomization_enabled = True
+        print(f"\n{'='*80}")
+        print(f"[Arm Curriculum] Enabled at Iteration {total_iterations}")
+        print(f"  Arm trajectory controller is now active")
+        print(f"  Policy must learn to compensate for arm disturbances")
+        print(f"{'='*80}\n")
+    elif not should_enable and not hasattr(env, '_arm_curriculum_init'):
+        env._arm_curriculum_init = True
+        print(f"\n{'='*80}")
+        print(f"[Arm Curriculum] Initialized")
+        print(f"  Stage 1 (0-{threshold_iteration} iter): Arm stays still")
+        print(f"  Stage 2 ({threshold_iteration}+ iter): Arm trajectory enabled")
+        print(f"  Current iteration: {total_iterations}")
+        print(f"{'='*80}\n")
+
+    # Return current state
+    return torch.tensor(float(env._arm_randomization_enabled), device=env.device)
+
+
 # Legacy function names for backward compatibility (if needed)
 def command_levels_height(
     env: ManagerBasedRLEnv,

@@ -27,6 +27,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from robot_lab.tasks.manager_based.locomotion.velocity_pose.velocity_pose_env_cfg import (
     LocomotionVelocityPoseRoughEnvCfg,
 )
+from robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp.composite_actions import DogArmCompositeAction
 import robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp as mdp
 
 ##
@@ -140,7 +141,7 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
                     scale=0.05
                 )  # 12D
                 
-                # Last actions (12D: policy controls dog joints only, arm controlled separately)
+                # Last actions (12D: policy controls dog joints only)
                 actions = ObsTerm(func=mdp.last_action)  # 12D
                 
                 # ========== ARM OBSERVATIONS (NEW) ==========
@@ -186,17 +187,21 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             policy: PolicyCfg = PolicyCfg()
         
         # Total observation dimension: 3+3+3+7+12+12+12+6+6+3+3 = 70D
-        # Note: Flat terrain has 70D (no height_scan), Rough terrain would have 70D+ (with height_scan)
+        # Note: 12D actions = policy controls dog joints only, arm controlled by trajectory
         self.observations = GO2X5ObservationsCfg()
 
         # ========================================
         # Actions Configuration
         # ========================================
-        # Policy outputs 12D (dog joints only)
-        # Arm actions (6D) will be filled by trajectory controller
-        self.actions.joint_pos.scale = {".*_hip_joint": 0.125, "^(?!.*_hip_joint).*": 0.25}
-        self.actions.joint_pos.clip = {".*": (-100.0, 100.0)}
-        self.actions.joint_pos.joint_names = self.dog_joint_names  # Policy controls dog only
+        # Use composite action term that combines:
+        # - Policy outputs: 12D (dog joints only)
+        # - Arm trajectory: 6D (generated internally)
+        # - Total applied: 18D (combined to robot)
+        from isaaclab.managers import ActionTermCfg
+        self.actions.joint_pos = ActionTermCfg(
+            class_type=DogArmCompositeAction,
+            asset_name="robot",
+        )
 
         # ========================================
         # Events Configuration

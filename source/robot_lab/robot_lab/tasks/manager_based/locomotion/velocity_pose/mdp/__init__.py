@@ -12,6 +12,7 @@
 from robot_lab.tasks.manager_based.locomotion.velocity.mdp import *  # noqa: F401, F403
 
 # Then import velocity_pose specific functions
+from .actions import *  # noqa: F401, F403
 from .commands import *  # noqa: F401, F403
 from .curriculums import *  # noqa: F401, F403
 from .events import *  # noqa: F401, F403

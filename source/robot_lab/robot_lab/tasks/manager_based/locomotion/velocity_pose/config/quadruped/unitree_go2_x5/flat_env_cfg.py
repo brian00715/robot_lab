@@ -13,6 +13,12 @@ class UnitreeGo2X5VelocityPoseFlatEnvCfg(UnitreeGo2X5VelocityPoseRoughEnvCfg):
     
     def __post_init__(self):
         super().__post_init__()
+
+                
+        # -------------------- Terrain Configuration --------------------
+        # Change terrain to flat plane (critical for flat terrain!)
+        self.scene.terrain.terrain_type = "plane"
+        self.scene.terrain.terrain_generator = None
         
         # Flat terrain - no height scanner needed
         self.scene.height_scanner = None
