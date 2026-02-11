@@ -321,7 +321,7 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         
         self.rewards.track_orientation_exp = RewTerm(
             func=mdp.track_orientation_exp_without_yaw,
-            weight=4.0,
+            weight=0.0,
             params={
                 "command_name": "base_velocity_pose",
                 "std": 0.707,

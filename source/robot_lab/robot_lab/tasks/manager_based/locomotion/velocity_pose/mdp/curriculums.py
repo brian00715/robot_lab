@@ -63,12 +63,25 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     except (AttributeError, KeyError):
         upward_cfg = None
     
+    # Try to get CoM stability reward (critical for robots with arms)
+    try:
+        com_stability_cfg = env.reward_manager.get_term_cfg("combined_com_stability")
+    except (AttributeError, KeyError):
+        com_stability_cfg = None
+    
     # Stage 1: Disable pose tracking rewards, enable locomotion penalties and upward reward
     if stage == 1:
         if height_reward_cfg:
             height_reward_cfg.weight = 0.0
+            # Also update the active weight in RewardManager
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_height_exp"] = 0.0
+        
         if orient_reward_cfg:
             orient_reward_cfg.weight = 0.0
+            # Also update the active weight in RewardManager
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_orientation_exp"] = 0.0
         
         # Yaw control: relaxed tolerance (allow some drift during basic locomotion learning)
         if ang_vel_z_tracking_cfg:
@@ -83,16 +96,26 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Enable upward reward in Stage 1 to maintain stability during basic locomotion learning
         if upward_cfg:
             upward_cfg.weight = 1.0
-    
+
+        # CoM stability
+        if com_stability_cfg:
+            com_stability_cfg.weight = 2.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["combined_com_stability"] = 2.0
+
     # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties and upward
     elif stage == 2:
         if height_reward_cfg:
             height_reward_cfg.params["std"] = math.sqrt(0.25)  
-            height_reward_cfg.weight = 4.0  
+            height_reward_cfg.weight = 4.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_height_exp"] = 4.0
         
         if orient_reward_cfg:
             orient_reward_cfg.params["std"] = math.sqrt(0.50)  
-            orient_reward_cfg.weight = 4.0  
+            orient_reward_cfg.weight = 4.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_orientation_exp"] = 4.0
         
         if ang_vel_z_tracking_cfg:
             ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.10)  
@@ -106,16 +129,26 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # CRITICAL: Disable upward reward from Stage 2 onwards (conflicts with pose tracking)
         if upward_cfg:
             upward_cfg.weight = 0.0
-    
+
+        # CoM stability
+        if com_stability_cfg:
+            com_stability_cfg.weight = 3.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["combined_com_stability"] = 3.0
+
     # Stage 3: Strict tracking with high weight, upward remains disabled
     elif stage == 3:
         if height_reward_cfg:
             height_reward_cfg.params["std"] = math.sqrt(0.05)  
-            height_reward_cfg.weight = 12.0 
+            height_reward_cfg.weight = 12.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_height_exp"] = 12.0
         
         if orient_reward_cfg:
             orient_reward_cfg.params["std"] = math.sqrt(0.10)  
-            orient_reward_cfg.weight = 12.0  
+            orient_reward_cfg.weight = 12.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_orientation_exp"] = 12.0
         
         if ang_vel_z_tracking_cfg:
             ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.025)  
@@ -128,17 +161,26 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
-    
+        # CoM stability
+        if com_stability_cfg:
+            com_stability_cfg.weight = 4.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["combined_com_stability"] = 4.0
+
     # Stage 4: Very strict tracking with very high weight, upward remains disabled
     elif stage == 4:
         if height_reward_cfg:
             height_reward_cfg.params["std"] = math.sqrt(0.05)  
-            height_reward_cfg.weight = 16.0 
+            height_reward_cfg.weight = 16.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_height_exp"] = 16.0
         
         # Orientation tracking: very strict tolerance, very high weight
         if orient_reward_cfg:
             orient_reward_cfg.params["std"] = math.sqrt(0.10) 
-            orient_reward_cfg.weight = 16.0  
+            orient_reward_cfg.weight = 16.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_orientation_exp"] = 16.0
         
         # Yaw control: very strict tolerance (near-zero yaw drift tolerance)
         if ang_vel_z_tracking_cfg:
@@ -153,6 +195,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
+
+        # CoM stability
+        if com_stability_cfg:
+            com_stability_cfg.weight = 5.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["combined_com_stability"] = 5.0
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
@@ -350,13 +398,20 @@ def command_curriculum_height_pose(
     
     
     # This check must happen BEFORE stage calculation to ensure it persists across resets
+    # Only consider it inference mode if EXPLICITLY marked or if runner is None (not just missing)
     is_inference_mode = (
         hasattr(env.unwrapped, '_is_inference_mode') or  # Explicitly marked by play.py
-        not hasattr(env.unwrapped, '_rsl_rl_runner') or
         (hasattr(env.unwrapped, '_rsl_rl_runner') and env.unwrapped._rsl_rl_runner is None)  # type: ignore
     )
     
-    if is_inference_mode:
+    # FORCE Stage 1 at iteration 0 to avoid incorrect initialization
+    if total_iterations == 0 and not is_inference_mode:
+        target_stage = 1
+        height_range = (default_height, default_height)  
+        roll_range = (0.0, 0.0) 
+        pitch_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)  
+    elif is_inference_mode:
         # ALWAYS use Stage 4 in inference mode, even after resets
         target_stage = 4
         height_range = (0.18, 0.43)  # [0.18m, 0.43m] range
