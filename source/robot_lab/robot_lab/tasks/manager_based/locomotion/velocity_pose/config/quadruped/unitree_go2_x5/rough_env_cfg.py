@@ -74,18 +74,16 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.scene.height_scanner_base.prim_path = "{ENV_REGEX_NS}/Robot/" + self.base_link_name
 
         # ========================================
-        # Commands Configuration
+        # Commands Configuration - ALIGNED WITH GO2
         # ========================================
         # Set default height for Go2 (approximately 0.33m)
         self.commands.base_velocity_pose.default_height = 0.33
         
-        # Stage 1 Curriculum: Start conservative, gradually expand
-        # These will be adjusted by curriculum learning
-        self.commands.base_velocity_pose.ranges.height = (0.30, 0.36)  # Stage 1: ±3cm
-        self.commands.base_velocity_pose.ranges.roll = (-0.2, 0.2)     # Stage 1: ±11.5°
-        self.commands.base_velocity_pose.ranges.pitch = (-0.15, 0.15)  # Stage 1: ±8.6°
+        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  
+        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)   
+        self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)
         
-        # Velocity ranges (can be more aggressive)
+        # Velocity ranges
         self.commands.base_velocity_pose.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity_pose.ranges.lin_vel_y = (-0.6, 0.6)
         self.commands.base_velocity_pose.ranges.ang_vel_z = (-1.0, 1.0)
@@ -233,12 +231,8 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
 
         # ========================================
-        # Rewards Configuration (Stage 1)
+        # Rewards Configuration
         # ========================================
-        
-        # Disable rewards with empty body_names from parent class (would cause ValueError)
-        self.rewards.wheel_vel_penalty = None
-        self.rewards.feet_distance_y_exp = None
         
         # General
         self.rewards.is_terminated.weight = 0
@@ -304,32 +298,41 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
 
         # Velocity-tracking rewards
         self.rewards.track_lin_vel_xy_exp.weight = 6.0
-        self.rewards.track_lin_vel_xy_exp.params["std"] = 0.5
-        
         self.rewards.track_ang_vel_z_exp.weight = 6.0
-        self.rewards.track_ang_vel_z_exp.params["std"] = 0.707
+        self.rewards.track_ang_vel_z_exp.params["std"] = math.sqrt(0.05)
         
         self.rewards.track_height_exp = RewTerm(
             func=mdp.track_height_exp,
-            weight=4.0,
+            weight=2.0,
             params={
                 "command_name": "base_velocity_pose",
-                "std": 0.5,
+                "std": math.sqrt(0.25),
                 "sensor_cfg": SceneEntityCfg("height_scanner_base"),
             }
         )
         
         self.rewards.track_orientation_exp = RewTerm(
             func=mdp.track_orientation_exp_without_yaw,
-            weight=0.0,
+            weight=1.0,
             params={
                 "command_name": "base_velocity_pose",
-                "std": 0.707,
+                "std": math.sqrt(0.5),
             }
         )
 
-        # Others - feet rewards
-        self.rewards.feet_air_time.weight = 0.3
+        # Anti-spinning reward: accumulated angular velocity penalty (deployable with IMU-only)
+        self.rewards.accumulated_ang_vel_standing = RewTerm(
+            func=mdp.accumulated_ang_vel_penalty_when_standing,
+            weight=4.0,
+            params={
+                "command_name": "base_velocity_pose",
+                "velocity_threshold": 0.05,  
+                "angle_std": math.radians(10), 
+            }
+        )
+
+        # Others - feet rewards - EXACT SAME AS GO2
+        self.rewards.feet_air_time.weight = 0.1
         self.rewards.feet_air_time.params["threshold"] = 0.5
         self.rewards.feet_air_time.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_air_time_variance.weight = -1.0
@@ -338,9 +341,9 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.feet_contact.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_contact_without_cmd.weight = 0.1
         self.rewards.feet_contact_without_cmd.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_stumble.weight = -1.0
+        self.rewards.feet_stumble.weight = 0
         self.rewards.feet_stumble.params["sensor_cfg"].body_names = [self.foot_link_name]
-        self.rewards.feet_slide.weight = -0.3
+        self.rewards.feet_slide.weight = -0.1
         self.rewards.feet_slide.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_slide.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height.weight = 0
@@ -353,67 +356,8 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
         self.rewards.upward.weight = 1.0
         
-        # ========================================
-        # ARM-Specific Stability Rewards (NEW for Stage 1)
-        # ========================================
-        
-        # Combined CoM stability - penalize CoM offset caused by arm movement
-        self.rewards.combined_com_stability = RewTerm(
-            func=mdp.combined_com_stability_reward,
-            weight=3.0,
-            params={
-                "dog_cfg": SceneEntityCfg("robot"),
-                "dog_mass": 15.0,
-                "arm_mass": 3.0,
-                "target_com_offset": (0.0, 0.0, 0.0),
-                "std": 0.10,
-                "arm_body_names": ["link1", "link2", "link3", "link4", "link5", "link6"]
-            }
-        )
-        
-        # Base stability - penalize excessive linear/angular acceleration
-        self.rewards.base_stability = RewTerm(
-            func=mdp.base_stability_reward,
-            weight=2.0,
-            params={
-                "lin_acc_std": 3.0,
-                "ang_acc_std": 5.0,
-                "asset_cfg": SceneEntityCfg("robot")
-            }
-        )
-        
-        # Feet contact force balance - encourage even weight distribution
-        self.rewards.feet_contact_balance = RewTerm(
-            func=mdp.feet_contact_force_balance,
-            weight=1.5,
-            params={
-                "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_foot"),
-                "target_distribution": [0.25, 0.25, 0.25, 0.25]
-            }
-        )
-        
-        # Anti-flip reward - CRITICAL for preventing rollover
-        self.rewards.anti_flip_reward = RewTerm(
-            func=mdp.anti_flip_orientation_reward,
-            weight=5.0,
-            params={
-                "roll_threshold": 0.785,    # 45°
-                "pitch_threshold": 0.524,   # 30°
-                "penalize_flip_attempt": True,
-                "asset_cfg": SceneEntityCfg("robot")
-            }
-        )
-        
-        # Upright bonus - reward staying upright
-        self.rewards.upright_bonus = RewTerm(
-            func=mdp.upright_bonus_reward,
-            weight=2.0,
-            params={
-                "target_gravity_z": -1.0,
-                "tolerance": 0.1,
-                "asset_cfg": SceneEntityCfg("robot")
-            }
-        )
+        if self.__class__.__name__ in ["UnitreeGo2X5VelocityPoseRoughEnvCfg", "UnitreeGo2X5VelocityPoseFlatEnvCfg"]:
+            self.disable_zero_weight_rewards()
         
         # ========================================
         # Terminations Configuration (Safety-Critical)
@@ -437,15 +381,3 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             func=mdp.command_curriculum_height_pose,
             params={"command_name": "base_velocity_pose"}
         )
-
-
-@configclass
-class UnitreeGo2X5VelocityPoseFlatEnvCfg(UnitreeGo2X5VelocityPoseRoughEnvCfg):
-    """Configuration for flat terrain."""
-    
-    def __post_init__(self):
-        super().__post_init__()
-        
-        # Flat terrain - no height scanner needed
-        self.scene.height_scanner = None
-        self.observations.policy.height_scan = None

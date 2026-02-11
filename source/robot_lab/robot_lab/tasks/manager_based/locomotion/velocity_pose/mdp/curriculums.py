@@ -63,23 +63,21 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
     except (AttributeError, KeyError):
         upward_cfg = None
     
-    # Try to get CoM stability reward (critical for robots with arms)
+    # Try to get accumulated angular velocity penalty (anti-spinning when standing)
     try:
-        com_stability_cfg = env.reward_manager.get_term_cfg("combined_com_stability")
+        accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
     except (AttributeError, KeyError):
-        com_stability_cfg = None
+        accumulated_ang_vel_cfg = None
     
     # Stage 1: Disable pose tracking rewards, enable locomotion penalties and upward reward
     if stage == 1:
         if height_reward_cfg:
             height_reward_cfg.weight = 0.0
-            # Also update the active weight in RewardManager
             if hasattr(env.reward_manager, '_term_weights'):
                 env.reward_manager._term_weights["track_height_exp"] = 0.0
         
         if orient_reward_cfg:
             orient_reward_cfg.weight = 0.0
-            # Also update the active weight in RewardManager
             if hasattr(env.reward_manager, '_term_weights'):
                 env.reward_manager._term_weights["track_orientation_exp"] = 0.0
         
@@ -96,12 +94,10 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Enable upward reward in Stage 1 to maintain stability during basic locomotion learning
         if upward_cfg:
             upward_cfg.weight = 1.0
-
-        # CoM stability
-        if com_stability_cfg:
-            com_stability_cfg.weight = 2.0
-            if hasattr(env.reward_manager, '_term_weights'):
-                env.reward_manager._term_weights["combined_com_stability"] = 2.0
+        
+        # Accumulated angular velocity penalty: DISABLED in Stage 1
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 0.0
 
     # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties and upward
     elif stage == 2:
@@ -129,12 +125,10 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # CRITICAL: Disable upward reward from Stage 2 onwards (conflicts with pose tracking)
         if upward_cfg:
             upward_cfg.weight = 0.0
-
-        # CoM stability
-        if com_stability_cfg:
-            com_stability_cfg.weight = 3.0
-            if hasattr(env.reward_manager, '_term_weights'):
-                env.reward_manager._term_weights["combined_com_stability"] = 3.0
+        
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 0.5
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(20)
 
     # Stage 3: Strict tracking with high weight, upward remains disabled
     elif stage == 3:
@@ -161,11 +155,10 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
-        # CoM stability
-        if com_stability_cfg:
-            com_stability_cfg.weight = 4.0
-            if hasattr(env.reward_manager, '_term_weights'):
-                env.reward_manager._term_weights["combined_com_stability"] = 4.0
+        
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 1.0
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(15)
 
     # Stage 4: Very strict tracking with very high weight, upward remains disabled
     elif stage == 4:
@@ -195,12 +188,12 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         # Keep upward disabled
         if upward_cfg:
             upward_cfg.weight = 0.0
-
-        # CoM stability
-        if com_stability_cfg:
-            com_stability_cfg.weight = 5.0
-            if hasattr(env.reward_manager, '_term_weights'):
-                env.reward_manager._term_weights["combined_com_stability"] = 5.0
+        
+        # Anti-spin when standing: moderate control (5° tolerance)
+        # NOTE: Function returns negative values, so weight should be POSITIVE
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 1.5
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(5)
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
@@ -257,6 +250,15 @@ def _print_reward_parameters(env: ManagerBasedRLEnv):
         print(f"    upward:                 weight={upward_weight:.2f}")
     except (AttributeError, KeyError):
         print("    upward:                 Not configured")
+    
+    # Print anti-spin penalty when standing
+    try:
+        accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
+        accumulated_weight = accumulated_ang_vel_cfg.weight
+        angle_std = accumulated_ang_vel_cfg.params.get("angle_std", 0.0)
+        print(f"    accumulated_ang_vel_standing: weight={accumulated_weight:.1f}, angle_std={angle_std:.3f} ({math.degrees(angle_std):.1f}°)")
+    except (AttributeError, KeyError):
+        print("    accumulated_ang_vel_standing: Not configured")
 
 
 def terrain_levels_velocity_pose(

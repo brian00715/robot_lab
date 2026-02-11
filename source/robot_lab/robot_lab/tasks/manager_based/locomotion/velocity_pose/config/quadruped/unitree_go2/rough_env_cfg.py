@@ -177,6 +177,17 @@ class UnitreeGo2VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             }
         )
 
+        # Anti-spinning reward: accumulated angular velocity penalty (deployable with IMU-only)
+        self.rewards.accumulated_ang_vel_standing = RewTerm(
+            func=mdp.accumulated_ang_vel_penalty_when_standing,
+            weight=4.0, 
+            params={
+                "command_name": "base_velocity_pose",
+                "velocity_threshold": 0.05, 
+                "angle_std": math.radians(10),
+            }
+        )
+
         # Others
         self.rewards.feet_air_time.weight = 0.1
         self.rewards.feet_air_time.params["threshold"] = 0.5

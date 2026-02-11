@@ -13,8 +13,7 @@ class UnitreeGo2X5VelocityPoseFlatEnvCfg(UnitreeGo2X5VelocityPoseRoughEnvCfg):
     
     def __post_init__(self):
         super().__post_init__()
-
-                
+        
         # -------------------- Terrain Configuration --------------------
         # Change terrain to flat plane (critical for flat terrain!)
         self.scene.terrain.terrain_type = "plane"
@@ -28,16 +27,16 @@ class UnitreeGo2X5VelocityPoseFlatEnvCfg(UnitreeGo2X5VelocityPoseRoughEnvCfg):
         if hasattr(self.observations.policy, 'height_scan'):
             self.observations.policy.height_scan = None
         
-        # Disable height tracking reward (requires height scanner)
-        if hasattr(self.rewards, 'track_height_exp'):
-            self.rewards.track_height_exp = None
+        if hasattr(self.rewards, 'track_height_exp') and self.rewards.track_height_exp is not None:
+            self.rewards.track_height_exp.params["sensor_cfg"] = None
+            print(f"[Config] track_height_exp weight: {self.rewards.track_height_exp.weight}")
         
-        # Fix base_height_l2 reward (body_names="" causes error)
-        if hasattr(self.rewards, 'base_height_l2'):
+        if hasattr(self.rewards, 'track_orientation_exp') and self.rewards.track_orientation_exp is not None:
+            print(f"[Config] track_orientation_exp weight: {self.rewards.track_orientation_exp.weight}")
+        
+        if hasattr(self.rewards, 'base_height_l2') and self.rewards.base_height_l2 is not None:
             self.rewards.base_height_l2.params["sensor_cfg"] = None
-            # Set body_names to base_link_name to avoid empty string error
             self.rewards.base_height_l2.params["asset_cfg"].body_names = self.base_link_name
-            # Set weight to 0 since we don't need height reward on flat terrain
             self.rewards.base_height_l2.weight = 0.0
         
         # Disable terrain curriculum
