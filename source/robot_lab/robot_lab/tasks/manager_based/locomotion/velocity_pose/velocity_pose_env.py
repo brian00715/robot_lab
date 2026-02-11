@@ -39,6 +39,6 @@ class VelocityPoseEnv(ManagerBasedRLEnv):
         """
         super().__init__(cfg, render_mode, **kwargs)
         
-        print("[VelocityPoseEnv] Initialized successfully")
-        print("[VelocityPoseEnv] NOTE: Arm motion is handled by DogArmCompositeAction in ActionManager")
+        # print("[VelocityPoseEnv] Initialized successfully")  # (DISABLED for performance)
+        # print("[VelocityPoseEnv] NOTE: Arm motion is handled by DogArmCompositeAction in ActionManager")  # (DISABLED for performance)
 

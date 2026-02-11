@@ -126,13 +126,13 @@ class DogArmCompositeAction(ActionTerm):
         self._raw_actions = actions.clone()
         
         if self._has_arm and self._arm_controller is not None:
-            # Debug: First step
-            if self._step_counter == 1:
-                print(f"\n{'='*80}")
-                print("[DogArmCompositeAction] First step:")
-                print(f"  Policy actions shape: {actions.shape}")
-                print(f"  Policy actions[0]: {actions[0]}")
-                print(f"{'='*80}\n")
+            # Debug: First step (DISABLED for performance)
+            # if self._step_counter == 1:
+            #     print(f"\n{'='*80}")
+            #     print("[DogArmCompositeAction] First step:")
+            #     print(f"  Policy actions shape: {actions.shape}")
+            #     print(f"  Policy actions[0]: {actions[0]}")
+            #     print(f"{'='*80}\n")
             
             # Policy outputs dog actions (12D)
             dog_actions = actions
@@ -140,11 +140,11 @@ class DogArmCompositeAction(ActionTerm):
             # Generate arm trajectory actions (6D)
             arm_actions = self._arm_controller.generate_arm_action(self._env)
             
-            # Debug: Every 100 steps
-            if self._step_counter % 100 == 0:
-                print(f"[DogArmCompositeAction] Step {self._step_counter}:")
-                print(f"  Arm actions mean: {arm_actions.mean(dim=0).cpu().numpy()}")
-                print(f"  Arm actions std: {arm_actions.std(dim=0).cpu().numpy()}")
+            # Debug: Every 100 steps (DISABLED for performance)
+            # if self._step_counter % 100 == 0:
+            #     print(f"[DogArmCompositeAction] Step {self._step_counter}:")
+            #     print(f"  Arm actions mean: {arm_actions.mean(dim=0).cpu().numpy()}")
+            #     print(f"  Arm actions std: {arm_actions.std(dim=0).cpu().numpy()}")
             
             # Apply scale to dog actions only (arm uses full trajectory output)
             scaled_dog_actions = self._offset + self._scale * dog_actions

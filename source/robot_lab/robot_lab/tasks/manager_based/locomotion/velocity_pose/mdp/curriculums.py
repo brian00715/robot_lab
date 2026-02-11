@@ -197,68 +197,69 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
 
 
 def _print_reward_parameters(env: ManagerBasedRLEnv):
-    """Print current reward parameters for debugging."""
-    import math
+    """Print current reward parameters for debugging. (DISABLED for performance)"""
+    pass
+    # import math
     
-    print("  Reward Parameters:")
+    # print("  Reward Parameters:")
     
-    # Print pose tracking rewards
-    try:
-        height_reward_cfg = env.reward_manager.get_term_cfg("track_height_exp")
-        height_std = height_reward_cfg.params.get("std", 0.0)
-        height_weight = height_reward_cfg.weight
-        print(f"    track_height_exp:       weight={height_weight:.1f}, std={height_std:.3f} ({height_std:.2f}m)")
-    except (AttributeError, KeyError, ValueError):
-        print("    track_height_exp:       Not configured")
+    # # Print pose tracking rewards
+    # try:
+    #     height_reward_cfg = env.reward_manager.get_term_cfg("track_height_exp")
+    #     height_std = height_reward_cfg.params.get("std", 0.0)
+    #     height_weight = height_reward_cfg.weight
+    #     print(f"    track_height_exp:       weight={height_weight:.1f}, std={height_std:.3f} ({height_std:.2f}m)")
+    # except (AttributeError, KeyError, ValueError):
+    #     print("    track_height_exp:       Not configured")
     
-    try:
-        orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
-        orient_std = orient_reward_cfg.params.get("std", 0.0)
-        orient_weight = orient_reward_cfg.weight
-        print(f"    track_orientation_exp:  weight={orient_weight:.1f}, std={orient_std:.3f} ({math.degrees(orient_std):.1f}°)")
-    except (AttributeError, KeyError, ValueError):
-        print("    track_orientation_exp:  Not configured")
+    # try:
+    #     orient_reward_cfg = env.reward_manager.get_term_cfg("track_orientation_exp")
+    #     orient_std = orient_reward_cfg.params.get("std", 0.0)
+    #     orient_weight = orient_reward_cfg.weight
+    #     print(f"    track_orientation_exp:  weight={orient_weight:.1f}, std={orient_std:.3f} ({math.degrees(orient_std):.1f}°)")
+    # except (AttributeError, KeyError, ValueError):
+    #     print("    track_orientation_exp:  Not configured")
     
-    # Print yaw angular velocity tracking (prevents self-spinning)
-    try:
-        ang_vel_z_cfg = env.reward_manager.get_term_cfg("track_ang_vel_z_exp")
-        ang_vel_z_std = ang_vel_z_cfg.params.get("std", 0.0)
-        ang_vel_z_weight = ang_vel_z_cfg.weight
-        print(f"    track_ang_vel_z_exp:    weight={ang_vel_z_weight:.1f}, std={ang_vel_z_std:.3f} ({ang_vel_z_std:.2f} rad/s)")
-    except (AttributeError, KeyError):
-        print("    track_ang_vel_z_exp:    Not configured")
+    # # Print yaw angular velocity tracking (prevents self-spinning)
+    # try:
+    #     ang_vel_z_cfg = env.reward_manager.get_term_cfg("track_ang_vel_z_exp")
+    #     ang_vel_z_std = ang_vel_z_cfg.params.get("std", 0.0)
+    #     ang_vel_z_weight = ang_vel_z_cfg.weight
+    #     print(f"    track_ang_vel_z_exp:    weight={ang_vel_z_weight:.1f}, std={ang_vel_z_std:.3f} ({ang_vel_z_std:.2f} rad/s)")
+    # except (AttributeError, KeyError):
+    #     print("    track_ang_vel_z_exp:    Not configured")
     
-    # Print locomotion penalty rewards
-    try:
-        lin_vel_z_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
-        lin_vel_z_weight = lin_vel_z_cfg.weight
-        print(f"    lin_vel_z_l2:           weight={lin_vel_z_weight:.2f}")
-    except (AttributeError, KeyError):
-        print("    lin_vel_z_l2:           Not configured")
+    # # Print locomotion penalty rewards
+    # try:
+    #     lin_vel_z_cfg = env.reward_manager.get_term_cfg("lin_vel_z_l2")
+    #     lin_vel_z_weight = lin_vel_z_cfg.weight
+    #     print(f"    lin_vel_z_l2:           weight={lin_vel_z_weight:.2f}")
+    # except (AttributeError, KeyError):
+    #     print("    lin_vel_z_l2:           Not configured")
     
-    try:
-        ang_vel_xy_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
-        ang_vel_xy_weight = ang_vel_xy_cfg.weight
-        print(f"    ang_vel_xy_l2:          weight={ang_vel_xy_weight:.2f}")
-    except (AttributeError, KeyError):
-        print("    ang_vel_xy_l2:          Not configured")
+    # try:
+    #     ang_vel_xy_cfg = env.reward_manager.get_term_cfg("ang_vel_xy_l2")
+    #     ang_vel_xy_weight = ang_vel_xy_cfg.weight
+    #     print(f"    ang_vel_xy_l2:          weight={ang_vel_xy_weight:.2f}")
+    # except (AttributeError, KeyError):
+    #     print("    ang_vel_xy_l2:          Not configured")
     
-    # Print upward reward (stability vs pose tracking trade-off)
-    try:
-        upward_cfg = env.reward_manager.get_term_cfg("upward")
-        upward_weight = upward_cfg.weight
-        print(f"    upward:                 weight={upward_weight:.2f}")
-    except (AttributeError, KeyError):
-        print("    upward:                 Not configured")
+    # # Print upward reward (stability vs pose tracking trade-off)
+    # try:
+    #     upward_cfg = env.reward_manager.get_term_cfg("upward")
+    #     upward_weight = upward_cfg.weight
+    #     print(f"    upward:                 weight={upward_weight:.2f}")
+    # except (AttributeError, KeyError):
+    #     print("    upward:                 Not configured")
     
-    # Print anti-spin penalty when standing
-    try:
-        accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
-        accumulated_weight = accumulated_ang_vel_cfg.weight
-        angle_std = accumulated_ang_vel_cfg.params.get("angle_std", 0.0)
-        print(f"    accumulated_ang_vel_standing: weight={accumulated_weight:.1f}, angle_std={angle_std:.3f} ({math.degrees(angle_std):.1f}°)")
-    except (AttributeError, KeyError):
-        print("    accumulated_ang_vel_standing: Not configured")
+    # # Print anti-spin penalty when standing
+    # try:
+    #     accumulated_ang_vel_cfg = env.reward_manager.get_term_cfg("accumulated_ang_vel_standing")
+    #     accumulated_weight = accumulated_ang_vel_cfg.weight
+    #     angle_std = accumulated_ang_vel_cfg.params.get("angle_std", 0.0)
+    #     print(f"    accumulated_ang_vel_standing: weight={accumulated_weight:.1f}, angle_std={angle_std:.3f} ({math.degrees(angle_std):.1f}°)")
+    # except (AttributeError, KeyError):
+    #     print("    accumulated_ang_vel_standing: Not configured")
 
 
 def terrain_levels_velocity_pose(
@@ -365,38 +366,39 @@ def command_curriculum_height_pose(
             )
             if env._curriculum_stage != expected_stage_for_iter:  
                 if not hasattr(env, '_curriculum_resume_warning_shown'):
-                    print(f"\n{'!'*80}")
-                    print("[WARNING] Curriculum iteration mismatch detected!")
-                    print(f"  Calculated iteration from steps: {total_iterations:,}")
-                    print(f"  Current stage: {env._curriculum_stage}")  # type: ignore
-                    print(f"  Expected stage for this iteration: {expected_stage_for_iter}")
-                    print("  This likely means training was resumed with --resume.")
-                    print("  Curriculum will maintain current stage until next boundary.")
-                    print(f"{'!'*80}\n")
+                    # (DISABLED for performance - only warns once on resume)
+                    # print(f"\n{'!'*80}")
+                    # print("[WARNING] Curriculum iteration mismatch detected!")
+                    # print(f"  Calculated iteration from steps: {total_iterations:,}")
+                    # print(f"  Current stage: {env._curriculum_stage}")  # type: ignore
+                    # print(f"  Expected stage for this iteration: {expected_stage_for_iter}")
+                    # print("  This likely means training was resumed with --resume.")
+                    # print("  Curriculum will maintain current stage until next boundary.")
+                    # print(f"{'!'*80}\n")
                     env._curriculum_resume_warning_shown = True  # type: ignore
     
-    # DEBUG: Print to verify iteration counting
-    if not hasattr(env, "_curriculum_debug_counter"):
-        env._curriculum_debug_counter = 0  # type: ignore
-        print(f"\n{'='*80}")
-        print("[Curriculum] Initialization - 4-Stage Curriculum Enabled")
-        print("  Stage 1: 0-20,000 iterations (Fixed pose at default)")
-        print("  Stage 2: 20,000-25,000 iterations (±3cm, ±8° roll)")
-        print("  Stage 3: 25,000-30,000 iterations (±10cm, ±20° roll, ±12° pitch/yaw)")
-        print("  Stage 4: 30,000+ iterations (±15cm, ±30° roll, ±15° pitch/yaw)")
-        print(f"  num_envs: {env.num_envs}")
-        print(f"  Iteration source: {iteration_source}")
-        print(f"  Current total_iterations: {total_iterations:,}")
-        print(f"  common_step_counter: {env.common_step_counter:,}")
-        print(f"{'='*80}\n")
+    # DEBUG: Print to verify iteration counting (DISABLED for performance)
+    # if not hasattr(env, "_curriculum_debug_counter"):
+    #     env._curriculum_debug_counter = 0  # type: ignore
+    #     print(f"\n{'='*80}")
+    #     print("[Curriculum] Initialization - 4-Stage Curriculum Enabled")
+    #     print("  Stage 1: 0-20,000 iterations (Fixed pose at default)")
+    #     print("  Stage 2: 20,000-25,000 iterations (±3cm, ±8° roll)")
+    #     print("  Stage 3: 25,000-30,000 iterations (±10cm, ±20° roll, ±12° pitch/yaw)")
+    #     print("  Stage 4: 30,000+ iterations (±15cm, ±30° roll, ±15° pitch/yaw)")
+    #     print(f"  num_envs: {env.num_envs}")
+    #     print(f"  Iteration source: {iteration_source}")
+    #     print(f"  Current total_iterations: {total_iterations:,}")
+    #     print(f"  common_step_counter: {env.common_step_counter:,}")
+    #     print(f"{'='*80}\n")
         
-    env._curriculum_debug_counter += 1 
-    if env._curriculum_debug_counter % 1000 == 0:  
-        print(f"\n[DEBUG Curriculum] Call {env._curriculum_debug_counter}:") 
-        print(f"  Iteration source: {iteration_source}")
-        print(f"  common_step_counter: {env.common_step_counter:,}")
-        print(f"  total_iterations: {total_iterations:,}")
-        print(f"  Current _curriculum_stage: {getattr(env, '_curriculum_stage', 'NOT SET')}")
+    # env._curriculum_debug_counter += 1 
+    # if env._curriculum_debug_counter % 1000 == 0:  
+    #     print(f"\n[DEBUG Curriculum] Call {env._curriculum_debug_counter}:") 
+    #     print(f"  Iteration source: {iteration_source}")
+    #     print(f"  common_step_counter: {env.common_step_counter:,}")
+    #     print(f"  total_iterations: {total_iterations:,}")
+    #     print(f"  Current _curriculum_stage: {getattr(env, '_curriculum_stage', 'NOT SET')}")
     
     
     # This check must happen BEFORE stage calculation to ensure it persists across resets
@@ -421,15 +423,15 @@ def command_curriculum_height_pose(
         pitch_range = (-0.262, 0.262)  # ±15°
         yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
         
-        # Print message only once per session
-        if not hasattr(env, "_curriculum_inference_message_shown"):
-            env._curriculum_inference_message_shown = True  # type: ignore
-            print(f"\n{'='*80}")
-            print("[Curriculum] INFERENCE MODE DETECTED")
-            print("  Automatically setting to Stage 4 (Maximum Range)")
-            print("  This allows full height and pose control capability")
-            print("  NOTE: Yaw fixed at 0° (no yaw control to avoid localization dependency)")
-            print(f"{'='*80}\n")
+        # # Print message only once per session
+        # if not hasattr(env, "_curriculum_inference_message_shown"):
+        #     env._curriculum_inference_message_shown = True  # type: ignore
+        #     print(f"\n{'='*80}")
+        #     print("[Curriculum] INFERENCE MODE DETECTED")
+        #     print("  Automatically setting to Stage 4 (Maximum Range)")
+        #     print("  This allows full height and pose control capability")
+        #     print("  NOTE: Yaw fixed at 0° (no yaw control to avoid localization dependency)")
+        #     print(f"{'='*80}\n")
     elif total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
         height_range = (default_height, default_height)  
@@ -505,33 +507,33 @@ def command_curriculum_height_pose(
         _print_reward_parameters(env)
         print(f"{'='*80}\n")
     
-    # Log current stage every 100 iterations with detailed command ranges
-    if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  
-        iterations_in_stage = total_iterations - (
-            0 if target_stage == 1 else       
-            20000 if target_stage == 2 else    
-            25000 if target_stage == 3 else   
-            30000                             
-        )
-        stage_total = (
-            20000 if target_stage == 1 else   
-            10000 if target_stage == 2 else   
-            15000 if target_stage == 3 else    
-            15000                              
-        )
-        progress = min(100.0, (iterations_in_stage / stage_total) * 100) if stage_total > 0 else 0.0
-        
-        print(f"\n{'='*80}")
-        print(f"[Curriculum Progress] Iteration {total_iterations}")
-        print(f"{'='*80}")
-        print(f"  Current Stage: {target_stage}")
-        print(f"  Stage Progress: {iterations_in_stage}/{stage_total} iterations ({progress:.1f}%)")
-        print("  Command Ranges:")
-        print(f"    Height: [{height_range[0]:.3f}, {height_range[1]:.3f}] m")
-        print(f"    Roll:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
-        print(f"    Pitch:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
-        print(f"    Yaw:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
-        print(f"{'='*80}\n")
+    # Log current stage every 100 iterations with detailed command ranges (DISABLED for performance)
+    # if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  
+    #     iterations_in_stage = total_iterations - (
+    #         0 if target_stage == 1 else       
+    #         20000 if target_stage == 2 else    
+    #         25000 if target_stage == 3 else   
+    #         30000                             
+    #     )
+    #     stage_total = (
+    #         20000 if target_stage == 1 else   
+    #         10000 if target_stage == 2 else   
+    #         15000 if target_stage == 3 else    
+    #         15000                              
+    #     )
+    #     progress = min(100.0, (iterations_in_stage / stage_total) * 100) if stage_total > 0 else 0.0
+    #     
+    #     print(f"\n{'='*80}")
+    #     print(f"[Curriculum Progress] Iteration {total_iterations}")
+    #     print(f"{'='*80}")
+    #     print(f"  Current Stage: {target_stage}")
+    #     print(f"  Stage Progress: {iterations_in_stage}/{stage_total} iterations ({progress:.1f}%)")
+    #     print("  Command Ranges:")
+    #     print(f"    Height: [{height_range[0]:.3f}, {height_range[1]:.3f}] m")
+    #     print(f"    Roll:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
+    #     print(f"    Pitch:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
+    #     print(f"    Yaw:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
+    #     print(f"{'='*80}\n")
     
     # Return current stage as scalar for logging (take mean of all envs, which are all the same)
     return torch.tensor(float(target_stage), device=env.device)

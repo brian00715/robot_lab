@@ -86,20 +86,20 @@ def track_height_exp(
     # if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
     #     reward = torch.zeros_like(reward)
     
-    # Debug: Print statistics every 100 steps to catch the issue early
-    if not hasattr(env, "_height_debug_counter"):
-        env._height_debug_counter = 0
-    env._height_debug_counter += 1
-    if env._height_debug_counter % 100 == 0:
-        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
-        print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}){stage_info}:")
-        print(f"  Current height:               mean={current_height.mean().item():.4f}, min={current_height.min().item():.4f}, max={current_height.max().item():.4f}")
-        print(f"  Target height:                mean={target_height.mean().item():.4f}, min={target_height.min().item():.4f}, max={target_height.max().item():.4f}")
-        print(f"  Height error (abs):           mean={height_error_abs.mean().item():.4f}, max={height_error_abs.max().item():.4f}")
-        print(f"  projected_gravity[:, 2] (gz): mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
-        print(f"  Upright factor:               mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
-        print(f"  Raw reward (before upright):  mean={torch.exp(-height_error_abs / std).mean().item():.6f}")
-        print(f"  Final reward (after upright): mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
+    # Debug: Print statistics every 100 steps to catch the issue early (DISABLED for performance)
+    # if not hasattr(env, "_height_debug_counter"):
+    #     env._height_debug_counter = 0
+    # env._height_debug_counter += 1
+    # if env._height_debug_counter % 100 == 0:
+    #     stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
+    #     print(f"\n[DEBUG] Height Tracking Reward Statistics (Step {env._height_debug_counter}){stage_info}:")
+    #     print(f"  Current height:               mean={current_height.mean().item():.4f}, min={current_height.min().item():.4f}, max={current_height.max().item():.4f}")
+    #     print(f"  Target height:                mean={target_height.mean().item():.4f}, min={target_height.min().item():.4f}, max={target_height.max().item():.4f}")
+    #     print(f"  Height error (abs):           mean={height_error_abs.mean().item():.4f}, max={height_error_abs.max().item():.4f}")
+    #     print(f"  projected_gravity[:, 2] (gz): mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+    #     print(f"  Upright factor:               mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+    #     print(f"  Raw reward (before upright):  mean={torch.exp(-height_error_abs / std).mean().item():.6f}")
+    #     print(f"  Final reward (after upright): mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
 
@@ -225,34 +225,34 @@ def track_orientation_exp(
     # if hasattr(env, "_curriculum_stage") and env._curriculum_stage == 1:
     #     reward = torch.zeros_like(reward)
     
-    # Debug: Print statistics every 100 steps
-    if not hasattr(env, "_orient_debug_counter"):
-        env._orient_debug_counter = 0
-    env._orient_debug_counter += 1
-    if env._orient_debug_counter % 100 == 0:
-        gz = projected_gravity[:, 2]
-        # Verify yaw quaternion normalization
-        yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
-        current_quat_w_norm = torch.norm(current_quat_w, dim=1)
-        
-        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
-        print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}){stage_info}:")
-        print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
-        print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
-        print(f"  Target yaw (deg):              mean={torch.rad2deg(target_yaw).mean().item():.2f}, max={torch.rad2deg(target_yaw.abs()).max().item():.2f}")
-        print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
-        print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
-        print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
-        print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
-        print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
-        print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
-        print(f"  Error quat [w,x,y,z]:          mean=[{quat_error[:, 0].mean():.3f}, {quat_error[:, 1].mean():.3f}, {quat_error[:, 2].mean():.3f}, {quat_error[:, 3].mean():.3f}]")
-        print(f"  Error quat w component:        mean={quat_error[:, 0].mean():.6f}, min={quat_error[:, 0].min():.6f}, max={quat_error[:, 0].max():.6f}")
-        print(f"  Quaternion error angle (deg):  mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
-        print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
-        print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
-        print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
-        print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
+    # Debug: Print statistics every 100 steps (DISABLED for performance)
+    # if not hasattr(env, "_orient_debug_counter"):
+    #     env._orient_debug_counter = 0
+    # env._orient_debug_counter += 1
+    # if env._orient_debug_counter % 100 == 0:
+    #     gz = projected_gravity[:, 2]
+    #     # Verify yaw quaternion normalization
+    #     yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
+    #     current_quat_w_norm = torch.norm(current_quat_w, dim=1)
+    #     
+    #     stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
+    #     print(f"\n[DEBUG] Orientation Tracking Reward Statistics (Step {env._orient_debug_counter}){stage_info}:")
+    #     print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
+    #     print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
+    #     print(f"  Target yaw (deg):              mean={torch.rad2deg(target_yaw).mean().item():.2f}, max={torch.rad2deg(target_yaw.abs()).max().item():.2f}")
+    #     print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
+    #     print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
+    #     print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
+    #     print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
+    #     print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
+    #     print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
+    #     print(f"  Error quat [w,x,y,z]:          mean=[{quat_error[:, 0].mean():.3f}, {quat_error[:, 1].mean():.3f}, {quat_error[:, 2].mean():.3f}, {quat_error[:, 3].mean():.3f}]")
+    #     print(f"  Error quat w component:        mean={quat_error[:, 0].mean():.6f}, min={quat_error[:, 0].min():.6f}, max={quat_error[:, 0].max():.6f}")
+    #     print(f"  Quaternion error angle (deg):  mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
+    #     print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+    #     print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+    #     print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
+    #     print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
 
@@ -392,35 +392,35 @@ def track_orientation_exp_without_yaw(
     upright_factor = torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7
     reward *= upright_factor
     
-    # Debug: Print statistics every 100 steps (same as original function)
-    if not hasattr(env, "_orient_noyaw_debug_counter"):
-        env._orient_noyaw_debug_counter = 0
-    env._orient_noyaw_debug_counter += 1
-    if env._orient_noyaw_debug_counter % 100 == 0:
-        gz = projected_gravity[:, 2]
-        # Verify yaw quaternion normalization
-        yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
-        current_quat_w_norm = torch.norm(current_quat_w, dim=1)
-        
-        stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
-        print(f"\n[DEBUG] Orientation Tracking (NO YAW) Reward Statistics (Step {env._orient_noyaw_debug_counter}){stage_info}:")
-        print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
-        print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
-        print("  Target yaw:                    IGNORED (no yaw tracking)")
-        print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
-        print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
-        print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
-        print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
-        print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
-        print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
-        print(f"  Roll error component (x):      mean={roll_error_component.mean().item():.6f}, max={roll_error_component.abs().max().item():.6f}")
-        print(f"  Pitch error component (y):     mean={pitch_error_component.mean().item():.6f}, max={pitch_error_component.abs().max().item():.6f}")
-        print(f"  Component error norm:          mean={component_error_norm.mean().item():.6f}, max={component_error_norm.max().item():.6f}")
-        print(f"  Angular error (deg):           mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
-        print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
-        print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
-        print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
-        print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
+    # Debug: Print statistics every 100 steps (DISABLED for performance)
+    # if not hasattr(env, "_orient_noyaw_debug_counter"):
+    #     env._orient_noyaw_debug_counter = 0
+    # env._orient_noyaw_debug_counter += 1
+    # if env._orient_noyaw_debug_counter % 100 == 0:
+    #     gz = projected_gravity[:, 2]
+    #     # Verify yaw quaternion normalization
+    #     yaw_quat_norm = torch.norm(current_yaw_quat, dim=1)
+    #     current_quat_w_norm = torch.norm(current_quat_w, dim=1)
+    #     
+    #     stage_info = f" [Stage {env._curriculum_stage}]" if hasattr(env, "_curriculum_stage") else ""
+    #     print(f"\n[DEBUG] Orientation Tracking (NO YAW) Reward Statistics (Step {env._orient_noyaw_debug_counter}){stage_info}:")
+    #     print(f"  Target roll (deg):             mean={torch.rad2deg(target_roll).mean().item():.2f}, max={torch.rad2deg(target_roll.abs()).max().item():.2f}")
+    #     print(f"  Target pitch (deg):            mean={torch.rad2deg(target_pitch).mean().item():.2f}, max={torch.rad2deg(target_pitch.abs()).max().item():.2f}")
+    #     print("  Target yaw:                    IGNORED (no yaw tracking)")
+    #     print(f"  Target quat [w,x,y,z]:         mean=[{target_quat[:, 0].mean():.3f}, {target_quat[:, 1].mean():.3f}, {target_quat[:, 2].mean():.3f}, {target_quat[:, 3].mean():.3f}]")
+    #     print(f"  Current quat (world):          mean=[{current_quat_w[:, 0].mean():.3f}, {current_quat_w[:, 1].mean():.3f}, {current_quat_w[:, 2].mean():.3f}, {current_quat_w[:, 3].mean():.3f}]")
+    #     print(f"  Current quat norm:             mean={current_quat_w_norm.mean():.6f}, min={current_quat_w_norm.min():.6f}, max={current_quat_w_norm.max():.6f}")
+    #     print(f"  Current yaw quat:              mean=[{current_yaw_quat[:, 0].mean():.3f}, {current_yaw_quat[:, 1].mean():.3f}, {current_yaw_quat[:, 2].mean():.3f}, {current_yaw_quat[:, 3].mean():.3f}]")
+    #     print(f"  Current yaw quat norm:         mean={yaw_quat_norm.mean():.6f}, min={yaw_quat_norm.min():.6f}, max={yaw_quat_norm.max():.6f}")
+    #     print(f"  Current quat (yaw-aligned):    mean=[{current_quat_yaw_aligned[:, 0].mean():.3f}, {current_quat_yaw_aligned[:, 1].mean():.3f}, {current_quat_yaw_aligned[:, 2].mean():.3f}, {current_quat_yaw_aligned[:, 3].mean():.3f}]")
+    #     print(f"  Roll error component (x):      mean={roll_error_component.mean().item():.6f}, max={roll_error_component.abs().max().item():.6f}")
+    #     print(f"  Pitch error component (y):     mean={pitch_error_component.mean().item():.6f}, max={pitch_error_component.abs().max().item():.6f}")
+    #     print(f"  Component error norm:          mean={component_error_norm.mean().item():.6f}, max={component_error_norm.max().item():.6f}")
+    #     print(f"  Angular error (deg):           mean={torch.rad2deg(angle_error).mean().item():.2f}, max={torch.rad2deg(angle_error).max().item():.2f}")
+    #     print(f"  projected_gravity[:, 2] (gz):  mean={gz.mean().item():.6f}, min={gz.min().item():.6f}, max={gz.max().item():.6f}")
+    #     print(f"  Upright factor (-gz clamped):  mean={upright_factor.mean().item():.6f}, min={upright_factor.min().item():.6f}, max={upright_factor.max().item():.6f}")
+    #     print(f"  Raw reward (before upright):   mean={torch.exp(-angle_error / std).mean().item():.6f}")
+    #     print(f"  Final reward (after upright):  mean={reward.mean().item():.9f}, min={reward.min().item():.9f}, max={reward.max().item():.9f}")
     
     return reward
 
@@ -969,57 +969,14 @@ def accumulated_ang_vel_penalty_when_standing(
         torch.zeros_like(penalty)
     )
     
-    # Debug: Print statistics every 100 steps
-    if not hasattr(env, "_accumulated_ang_vel_penalty_debug_counter"):
-        env._accumulated_ang_vel_penalty_debug_counter = 0
-    env._accumulated_ang_vel_penalty_debug_counter += 1
-    if env._accumulated_ang_vel_penalty_debug_counter % 100 == 0:
-        num_standing = is_standing.sum().item()
-        num_grounded = is_grounded.sum().item()
-        num_moving = (~is_standing).sum().item()
-        num_just_reset = just_reset.sum().item()
-        
-        # Calculate command statistics
-        lin_cmd_near_zero = (lin_vel_cmd_norm < velocity_threshold).sum().item()
-        ang_cmd_near_zero = (ang_vel_cmd_abs < velocity_threshold).sum().item()
-        both_cmd_zero = ((lin_vel_cmd_norm < velocity_threshold) & (ang_vel_cmd_abs < velocity_threshold)).sum().item()
-        
-        standing_accumulated = env._accumulated_ang_vel_local[is_standing]
-        standing_time = env._standing_time_local[is_standing]
-        stage_info = f" [Stage {current_stage}]"
-        
-        # Episode length statistics
-        avg_episode_length = env.episode_length_buf.float().mean().item()
-        max_episode_length = env.episode_length_buf.max().item()
-        
-        # Stage status indicator
-        stage_status = "✅ ACTIVE" if current_stage >= 2 else "❌ DISABLED (Stage < 2)"
-        
-        print(f"\n[DEBUG] Accumulated Angular Velocity Penalty Statistics (Step {env._accumulated_ang_vel_penalty_debug_counter}){stage_info}:")
-        print(f"  Curriculum stage:              {current_stage} - {stage_status}")
-        print(f"  angle_std parameter:           {angle_std:.4f} rad ({torch.rad2deg(torch.tensor(angle_std)):.1f}°)")
-        print(f"  Max exponent (clamp limit):    {max_exponent:.2f} (ensures penalty ≤ 200)")
-        print(f"  Episode stats:                 avg_len={avg_episode_length:.1f}, max_len={max_episode_length}, just_reset={num_just_reset}")
-        print(f"  Grounded envs:                 {num_grounded}/{env.num_envs} ({num_grounded*100/env.num_envs:.1f}%)")
-        print(f"  Lin cmd ≈ 0:                   {lin_cmd_near_zero}/{env.num_envs} ({lin_cmd_near_zero*100/env.num_envs:.1f}%)")
-        print(f"  Ang cmd ≈ 0:                   {ang_cmd_near_zero}/{env.num_envs} ({ang_cmd_near_zero*100/env.num_envs:.1f}%)")
-        print(f"  Both cmds ≈ 0:                 {both_cmd_zero}/{env.num_envs} ({both_cmd_zero*100/env.num_envs:.1f}%)")
-        print(f"  Standing envs (all conditions): {num_standing}/{env.num_envs} ({num_standing*100/env.num_envs:.1f}%)")
-        print(f"  Moving envs:                   {num_moving}/{env.num_envs} ({num_moving*100/env.num_envs:.1f}%)")
-        if num_standing > 0:
-            num_active_penalty = ((is_standing) & (env._standing_time_local > 0.5)).sum().item()
-            standing_exponent = exponent[is_standing]
-            standing_exponent_clamped = exponent_clamped[is_standing]
-            num_clamped = (standing_exponent > max_exponent).sum().item()
-            print(f"  Active penalty envs (>0.5s):   {num_active_penalty}/{num_standing} ({num_active_penalty*100/num_standing:.1f}%)")
-            print(f"  Standing time (s):             mean={standing_time.mean().item():.2f}, max={standing_time.max().item():.2f}")
-            print(f"  Accumulated ωz (rad):          mean={standing_accumulated.mean().item():.4f}, std={standing_accumulated.std().item():.4f}, max={standing_accumulated.abs().max().item():.4f}")
-            print(f"  Accumulated ωz (deg):          mean={torch.rad2deg(standing_accumulated).mean().item():.2f}, max={torch.rad2deg(standing_accumulated.abs()).max().item():.2f}")
-            print(f"  Exponent (before clamp):       mean={standing_exponent.mean().item():.2f}, max={standing_exponent.max().item():.2f}")
-            print(f"  Exponent (after clamp):        mean={standing_exponent_clamped.mean().item():.2f}, max={standing_exponent_clamped.max().item():.2f}")
-            print(f"  Clamped envs (exp>{max_exponent:.1f}):     {num_clamped}/{num_standing} ({num_clamped*100/num_standing:.1f}%)")
-            print(f"  Standing penalty:              mean={penalty[is_standing].mean().item():.6f}, min={penalty[is_standing].min().item():.6f}")
-        print(f"  Overall penalty:               mean={penalty.mean().item():.6f}, min={penalty.min().item():.6f}, max={penalty.max().item():.6f}")
+    # Debug: Print statistics every 100 steps (DISABLED for performance)
+    # if not hasattr(env, "_accumulated_ang_vel_penalty_debug_counter"):
+    #     env._accumulated_ang_vel_penalty_debug_counter = 0
+    # env._accumulated_ang_vel_penalty_debug_counter += 1
+    # if env._accumulated_ang_vel_penalty_debug_counter % 100 == 0:
+    #     ... (all debug print statements disabled)
+    
+    return penalty
     
     return penalty
 
