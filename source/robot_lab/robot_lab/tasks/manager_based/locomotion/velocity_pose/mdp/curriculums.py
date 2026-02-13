@@ -20,6 +20,7 @@ so --resume will correctly continue from the accumulated iteration count.
 
 from __future__ import annotations
 
+import math
 import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -29,8 +30,6 @@ if TYPE_CHECKING:
 
 
 def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
-
-    import math
     
     # Try to get pose tracking reward terms (may not exist in all environments)
     try:
@@ -408,6 +407,9 @@ def command_curriculum_height_pose(
         (hasattr(env.unwrapped, '_rsl_rl_runner') and env.unwrapped._rsl_rl_runner is None)  # type: ignore
     )
     
+    # Check if a specific inference stage was requested (from play.py --curriculum_stage argument)
+    inference_stage = getattr(env.unwrapped, '_inference_curriculum_stage', 4)  # Default to Stage 4 if not set
+    
     # FORCE Stage 1 at iteration 0 to avoid incorrect initialization
     if total_iterations == 0 and not is_inference_mode:
         target_stage = 1
@@ -416,22 +418,42 @@ def command_curriculum_height_pose(
         pitch_range = (0.0, 0.0)  
         yaw_range = (0.0, 0.0)  
     elif is_inference_mode:
-        # ALWAYS use Stage 4 in inference mode, even after resets
-        target_stage = 4
-        height_range = (0.18, 0.43)  # [0.18m, 0.43m] range
-        roll_range = (-0.524, 0.524)  # ±30° (π/6 rad)
-        pitch_range = (-0.262, 0.262)  # ±15°
-        yaw_range = (0.0, 0.0)  # Fixed at 0° (yaw not controlled - requires localization)
+        # Use the requested inference stage (from --curriculum_stage argument)
+        target_stage = inference_stage
         
-        # # Print message only once per session
-        # if not hasattr(env, "_curriculum_inference_message_shown"):
-        #     env._curriculum_inference_message_shown = True  # type: ignore
-        #     print(f"\n{'='*80}")
-        #     print("[Curriculum] INFERENCE MODE DETECTED")
-        #     print("  Automatically setting to Stage 4 (Maximum Range)")
-        #     print("  This allows full height and pose control capability")
-        #     print("  NOTE: Yaw fixed at 0° (no yaw control to avoid localization dependency)")
-        #     print(f"{'='*80}\n")
+        # Set ranges based on the requested stage
+        if target_stage == 1:  
+            height_range = (default_height, default_height)
+            roll_range = (0.0, 0.0)
+            pitch_range = (0.0, 0.0)
+            yaw_range = (0.0, 0.0)
+        elif target_stage == 2: 
+            height_range = (0.30, 0.36)  
+            roll_range = (-0.14, 0.14)  
+            pitch_range = (0.0, 0.0)
+            yaw_range = (0.0, 0.0)
+        elif target_stage == 3:  
+            height_range = (0.23, 0.43) 
+            roll_range = (-0.611, 0.611)  
+            pitch_range = (-0.349, 0.349)  
+            yaw_range = (0.0, 0.0)
+        else:  
+            height_range = (0.18, 0.43)  
+            roll_range = (-0.524, 0.524)  
+            pitch_range = (-0.262, 0.262)  
+            yaw_range = (0.0, 0.0)  
+
+        # Print message only once per session
+        if not hasattr(env, "_curriculum_inference_message_shown"):
+            env._curriculum_inference_message_shown = True  # type: ignore
+            print(f"\n{'='*80}")
+            print("[Curriculum] INFERENCE MODE DETECTED")
+            print(f"  Using Stage {target_stage} as requested")
+            print(f"  Height Range: [{height_range[0]:.3f}, {height_range[1]:.3f}] m")
+            print(f"  Roll Range:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
+            print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
+            print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
+            print(f"{'='*80}\n")
     elif total_iterations < 20000:  # Stage 1: Base training
         target_stage = 1
         height_range = (default_height, default_height)  

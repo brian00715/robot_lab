@@ -38,6 +38,13 @@ parser.add_argument(
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--keyboard", action="store_true", default=False, help="Whether to use keyboard.")
+parser.add_argument(
+    "--curriculum_stage",
+    type=int,
+    default=4,
+    choices=[1, 2, 3, 4],
+    help="Curriculum stage to use for inference (1=base, 2=small range, 3=medium range, 4=max range). Default: 4",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -175,8 +182,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
     
     # Mark as inference mode for curriculum (no runner injection)
-    # This tells curriculum to use Stage 4 (maximum range) for full capability
+    # Set the curriculum stage for inference based on command line argument
     env.unwrapped._is_inference_mode = True  # type: ignore[attr-defined]
+    env.unwrapped._inference_curriculum_stage = args_cli.curriculum_stage  # type: ignore[attr-defined]
+    
+    stage_descriptions = {
+        1: "Stage 1 (Base): Height/pose fixed at default, velocity control only",
+        2: "Stage 2 (Small): ±3cm height, ±8° roll",
+        3: "Stage 3 (Medium): ±10cm height, ±20° roll, ±12° pitch",
+        4: "Stage 4 (Maximum): ±15cm height, ±30° roll, ±15° pitch"
+    }
+    print(f"[INFO] Curriculum Stage for Inference: {stage_descriptions[args_cli.curriculum_stage]}")
 
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
