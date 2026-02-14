@@ -136,10 +136,17 @@ class ARX5TrajectoryController:
         #     print(f"  timesteps: {self.timesteps[:5]}")  # First 5 envs
         #     print(f"{'='*80}\n")
         
-        # CRITICAL: In Stage 1, keep arm fixed at zero position (no motion)
-        # This prevents arm swinging due to base motion and helps dog learn stable locomotion
+        # CRITICAL: Update motion_scale based on current curriculum stage
+        # This allows arm motion to increase with training difficulty
         if env is not None and hasattr(env, "_curriculum_stage"):
             current_stage = env._curriculum_stage
+            
+            # Update motion scale if stage changed
+            if not hasattr(self, "_last_stage") or self._last_stage != current_stage:
+                self._last_stage = current_stage
+                self.update_curriculum(current_stage)
+            
+            # In Stage 1, keep arm fixed at zero position (no motion)
             if current_stage == 1:
                 # Return zero actions - arm stays at initial position (all joints at 0)
                 return torch.zeros((self.num_envs, 6), device=self.device)
@@ -360,21 +367,21 @@ class ARX5TrajectoryController:
             stage: Current training stage (1-4).
         """
         if stage == 1:
-            # Stage 1: Conservative motion (30% speed)
-            self.motion_scale = 0.3
-            print(f"[ARX5Controller] Stage 1: motion_scale = {self.motion_scale}")
+            # Stage 1: No motion (arm fixed at zero position)
+            self.motion_scale = 0.0
+            # print(f"[ARX5Controller] Stage 1: motion_scale = {self.motion_scale} (arm fixed)")
         elif stage == 2:
-            # Stage 2: Moderate motion (60% speed)
-            self.motion_scale = 0.6
-            print(f"[ARX5Controller] Stage 2: motion_scale = {self.motion_scale}")
+            # Stage 2: Moderate motion
+            self.motion_scale = 1.2
+            # print(f"[ARX5Controller] Stage 2: motion_scale = {self.motion_scale}")
         elif stage == 3:
-            # Stage 3: Active motion (90% speed)
-            self.motion_scale = 0.9
-            print(f"[ARX5Controller] Stage 3: motion_scale = {self.motion_scale}")
+            # Stage 3: Active motion
+            self.motion_scale = 1.8
+            # print(f"[ARX5Controller] Stage 3: motion_scale = {self.motion_scale}")
         else:
-            # Stage 4+: Full speed
-            self.motion_scale = 1.0
-            print(f"[ARX5Controller] Stage 4: motion_scale = {self.motion_scale}")
+            # Stage 4+: Maximum motion
+            self.motion_scale = 2.5
+            # print(f"[ARX5Controller] Stage 4+: motion_scale = {self.motion_scale}")
     
     def get_motion_info(self) -> dict:
         """Get information about current motion state.

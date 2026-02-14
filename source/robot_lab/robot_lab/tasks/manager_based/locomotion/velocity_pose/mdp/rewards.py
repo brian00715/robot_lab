@@ -808,10 +808,11 @@ def accumulated_ang_vel_penalty_when_standing(
     yaw angle, making it fully deployable to real robots with only IMU.
     
     ACTIVATION CONDITIONS (ALL must be satisfied):
-        1. Curriculum stage >= 2 (disabled in stage 0 and 1)
+        1. Curriculum stage >= 1 (enabled from Stage 1 to prevent self-spinning from start)
         2. Robot is grounded (at least 2 feet in contact with ground)
         3. Linear velocity command ≈ 0 (vx, vy < velocity_threshold)
-        4. Standing duration > 0.5 seconds (avoid transient effects)
+        4. Angular velocity command ≈ 0 (ωz < velocity_threshold) - CRITICAL!
+        5. Standing duration > 0.5 seconds (avoid transient effects)
     
     Design Rationale:
     - Real robot IMU provides: angular velocity (gyroscope) 
@@ -864,11 +865,11 @@ def accumulated_ang_vel_penalty_when_standing(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     
-    # CRITICAL: Check curriculum stage - MUST be >= 2 to activate
-    # This prevents the penalty from interfering with basic locomotion learning in Stage 1
+    # CRITICAL: Check curriculum stage - MUST be >= 1 to activate
+    # Changed from >= 2 to >= 1 to prevent self-spinning from the beginning
     current_stage = getattr(env, "_curriculum_stage", 0)
-    if current_stage < 2:
-        # Return zero penalty immediately if Stage < 2
+    if current_stage < 1:
+        # Return zero penalty immediately if Stage < 1
         return torch.zeros(env.num_envs, device=env.device)
     
     # Get velocity command

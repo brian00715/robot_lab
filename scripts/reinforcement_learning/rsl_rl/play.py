@@ -158,9 +158,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
+    
+    # CRITICAL: Set inference stage BEFORE environment creation
+    # This allows DogArmCompositeAction to initialize with correct stage
+    env_cfg.inference_mode = True
+    env_cfg.inference_stage = args_cli.curriculum_stage
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    
+    # Also set on unwrapped env for curriculum to read
+    env.unwrapped._is_inference_mode = True  # type: ignore[attr-defined]
+    env.unwrapped._inference_curriculum_stage = args_cli.curriculum_stage  # type: ignore[attr-defined]
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):

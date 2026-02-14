@@ -47,14 +47,28 @@ class DogArmCompositeAction(ActionTerm):
         
         # Initialize arm controller if arm is detected
         self._arm_controller = None
+        self._env = env  # Store env reference for stage checking
         if self._has_arm:
             try:
+                # Check if inference stage is set (from play.py --curriculum_stage)
+                initial_stage = 1  # Default to stage 1
+                
+                # Try multiple sources for inference stage (in order of priority)
+                if hasattr(env.cfg, 'inference_stage') and env.cfg.inference_stage is not None:
+                    # From env_cfg (set by play.py BEFORE environment creation)
+                    initial_stage = env.cfg.inference_stage
+                    print(f"[DogArmCompositeAction] Detected inference stage from env_cfg: {initial_stage}")
+                elif hasattr(env.unwrapped, '_inference_curriculum_stage'):
+                    # From unwrapped env (set by play.py AFTER wrapper)
+                    initial_stage = env.unwrapped._inference_curriculum_stage
+                    print(f"[DogArmCompositeAction] Detected inference stage from unwrapped: {initial_stage}")
+                
                 self._arm_controller = create_arm_controller(
                     num_envs=env.num_envs,
                     device=env.device,
-                    stage=1  # Start with stage 1 (static arm)
+                    stage=initial_stage  # Use detected or default stage
                 )
-                print(f"[DogArmCompositeAction] Initialized arm controller for {env.num_envs} envs")
+                print(f"[DogArmCompositeAction] Initialized arm controller for {env.num_envs} envs at stage {initial_stage}")
             except Exception as e:
                 print(f"[DogArmCompositeAction] ERROR: Failed to initialize arm controller: {e}")
                 self._has_arm = False
