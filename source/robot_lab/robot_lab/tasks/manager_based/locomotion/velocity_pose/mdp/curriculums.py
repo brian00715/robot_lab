@@ -94,9 +94,10 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
         if upward_cfg:
             upward_cfg.weight = 1.0
         
-        # Accumulated angular velocity penalty: DISABLED in Stage 1
+        # Accumulated angular velocity penalty: ENABLED in Stage 1 to prevent self-spinning from start
         if accumulated_ang_vel_cfg:
-            accumulated_ang_vel_cfg.weight = 0.0
+            accumulated_ang_vel_cfg.weight = 0.5 
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(20)  
 
     # Stage 2: Enable pose tracking with relaxed tolerance, disable locomotion penalties and upward
     elif stage == 2:
@@ -454,25 +455,25 @@ def command_curriculum_height_pose(
             print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
             print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
             print(f"{'='*80}\n")
-    elif total_iterations < 40000:  # Stage 1: Base training
+    elif total_iterations < 20000:  # Stage 1: Base training (0-20k iterations)
         target_stage = 1
         height_range = (default_height, default_height)  
         roll_range = (0.0, 0.0) 
         pitch_range = (0.0, 0.0)  
         yaw_range = (0.0, 0.0)  
-    elif total_iterations < 43000:  
+    elif total_iterations < 25000:  # Stage 2: Height variation (20k-25k iterations)
         target_stage = 2
         height_range = (0.30, 0.36) 
         roll_range = (-0.14, 0.14)  
         pitch_range = (0.0, 0.0)  
         yaw_range = (0.0, 0.0)  
-    elif total_iterations < 45000:  
+    elif total_iterations < 30000:  # Stage 3: Full pose control (25k-30k iterations)
         target_stage = 3
         height_range = (0.23, 0.43)  
         roll_range = (-0.611, 0.611)  
         pitch_range = (-0.349, 0.349)  
         yaw_range = (0.0, 0.0)  
-    else: 
+    else:  # Stage 4: Maximum range (30k+ iterations)
         target_stage = 4
         height_range = (0.18, 0.43)  
         roll_range = (-0.785, 0.785)  
