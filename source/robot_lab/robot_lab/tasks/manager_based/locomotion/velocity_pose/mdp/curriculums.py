@@ -421,7 +421,6 @@ def command_curriculum_height_pose(
         # Use the requested inference stage (from --curriculum_stage argument)
         target_stage = inference_stage
         
-<<<<<<< Updated upstream
         # Set ranges based on the requested stage
         if target_stage == 1:  
             height_range = (default_height, default_height)
@@ -455,19 +454,7 @@ def command_curriculum_height_pose(
             print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
             print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
             print(f"{'='*80}\n")
-    elif total_iterations < 20000:  # Stage 1: Base training
-=======
-        # # Print message only once per session
-        # if not hasattr(env, "_curriculum_inference_message_shown"):
-        #     env._curriculum_inference_message_shown = True  # type: ignore
-        #     print(f"\n{'='*80}")
-        #     print("[Curriculum] INFERENCE MODE DETECTED")
-        #     print("  Automatically setting to Stage 4 (Maximum Range)")
-        #     print("  This allows full height and pose control capability")
-        #     print("  NOTE: Yaw fixed at 0° (no yaw control to avoid localization dependency)")
-        #     print(f"{'='*80}\n")
     elif total_iterations < 40000:  # Stage 1: Base training
->>>>>>> Stashed changes
         target_stage = 1
         height_range = (default_height, default_height)  
         roll_range = (0.0, 0.0) 
