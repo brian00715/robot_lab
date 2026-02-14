@@ -359,9 +359,9 @@ def command_curriculum_height_pose(
         
         if hasattr(env, '_curriculum_stage'):
             expected_stage_for_iter = (
-                1 if total_iterations < 40000 else  
-                2 if total_iterations < 43000 else  
-                3 if total_iterations < 45000 else  
+                1 if total_iterations < 20000 else  
+                2 if total_iterations < 25000 else  
+                3 if total_iterations < 30000 else  
                 4  
             )
             if env._curriculum_stage != expected_stage_for_iter:  
@@ -534,15 +534,15 @@ def command_curriculum_height_pose(
     # if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  
     #     iterations_in_stage = total_iterations - (
     #         0 if target_stage == 1 else       
-    #         40000 if target_stage == 2 else    
-    #         43000 if target_stage == 3 else   
-    #         45000                             
+    #         20000 if target_stage == 2 else    
+    #         25000 if target_stage == 3 else   
+    #         30000                             
     #     )
     #     stage_total = (
-    #         40000 if target_stage == 1 else   
-    #         10000 if target_stage == 2 else   
-    #         15000 if target_stage == 3 else    
-    #         15000                              
+    #         20000 if target_stage == 1 else
+    #         25000 if target_stage == 2 else
+    #         30000 if target_stage == 3 else
+    #         35000
     #     )
     #     progress = min(100.0, (iterations_in_stage / stage_total) * 100) if stage_total > 0 else 0.0
     #     
