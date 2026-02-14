@@ -358,9 +358,9 @@ def command_curriculum_height_pose(
         
         if hasattr(env, '_curriculum_stage'):
             expected_stage_for_iter = (
-                1 if total_iterations < 20000 else  
-                2 if total_iterations < 25000 else  
-                3 if total_iterations < 30000 else  
+                1 if total_iterations < 40000 else  
+                2 if total_iterations < 43000 else  
+                3 if total_iterations < 45000 else  
                 4  
             )
             if env._curriculum_stage != expected_stage_for_iter:  
@@ -421,6 +421,7 @@ def command_curriculum_height_pose(
         # Use the requested inference stage (from --curriculum_stage argument)
         target_stage = inference_stage
         
+<<<<<<< Updated upstream
         # Set ranges based on the requested stage
         if target_stage == 1:  
             height_range = (default_height, default_height)
@@ -455,18 +456,30 @@ def command_curriculum_height_pose(
             print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
             print(f"{'='*80}\n")
     elif total_iterations < 20000:  # Stage 1: Base training
+=======
+        # # Print message only once per session
+        # if not hasattr(env, "_curriculum_inference_message_shown"):
+        #     env._curriculum_inference_message_shown = True  # type: ignore
+        #     print(f"\n{'='*80}")
+        #     print("[Curriculum] INFERENCE MODE DETECTED")
+        #     print("  Automatically setting to Stage 4 (Maximum Range)")
+        #     print("  This allows full height and pose control capability")
+        #     print("  NOTE: Yaw fixed at 0° (no yaw control to avoid localization dependency)")
+        #     print(f"{'='*80}\n")
+    elif total_iterations < 40000:  # Stage 1: Base training
+>>>>>>> Stashed changes
         target_stage = 1
         height_range = (default_height, default_height)  
         roll_range = (0.0, 0.0) 
         pitch_range = (0.0, 0.0)  
         yaw_range = (0.0, 0.0)  
-    elif total_iterations < 25000:  
+    elif total_iterations < 43000:  
         target_stage = 2
         height_range = (0.30, 0.36) 
         roll_range = (-0.14, 0.14)  
         pitch_range = (0.0, 0.0)  
         yaw_range = (0.0, 0.0)  
-    elif total_iterations < 30000:  
+    elif total_iterations < 45000:  
         target_stage = 3
         height_range = (0.23, 0.43)  
         roll_range = (-0.611, 0.611)  
@@ -533,12 +546,12 @@ def command_curriculum_height_pose(
     # if total_iterations > 0 and total_iterations % 100 == 0 and total_iterations != env._curriculum_last_update:  
     #     iterations_in_stage = total_iterations - (
     #         0 if target_stage == 1 else       
-    #         20000 if target_stage == 2 else    
-    #         25000 if target_stage == 3 else   
-    #         30000                             
+    #         40000 if target_stage == 2 else    
+    #         43000 if target_stage == 3 else   
+    #         45000                             
     #     )
     #     stage_total = (
-    #         20000 if target_stage == 1 else   
+    #         40000 if target_stage == 1 else   
     #         10000 if target_stage == 2 else   
     #         15000 if target_stage == 3 else    
     #         15000                              

@@ -8,4 +8,8 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --headless \
   --video \
   --video_interval=24000 \
+<<<<<<< Updated upstream
   --run_name=go2x5_joint_mapping_fixed
+=======
+  --run_name=go2x5_joint_mapping_fixed
+>>>>>>> Stashed changes
