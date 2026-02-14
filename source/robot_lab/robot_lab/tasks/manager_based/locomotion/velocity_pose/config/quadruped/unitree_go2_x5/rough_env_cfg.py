@@ -195,8 +195,18 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
         # - Policy outputs: 12D (dog joints only)
         # - Arm trajectory: 6D (generated internally)
         # - Total applied: 18D (combined to robot)
-        from isaaclab.managers import ActionTermCfg
-        self.actions.joint_pos = ActionTermCfg(
+        
+        # Create custom ActionTermCfg for composite action with scale settings
+        from isaaclab.managers import ActionTermCfg as BaseActionTermCfg
+        
+        @configclass
+        class DogArmActionCfg(BaseActionTermCfg):
+            """Configuration for dog-arm composite action with scale settings."""
+            # These will be accessed by DogArmCompositeAction.__init__
+            scale: dict = {".*_hip_joint": 0.125, "^(?!.*_hip_joint).*": 0.25}
+            clip: dict = {".*": (-100.0, 100.0)}
+        
+        self.actions.joint_pos = DogArmActionCfg(
             class_type=DogArmCompositeAction,
             asset_name="robot",
         )
@@ -272,7 +282,7 @@ class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
             weight=-1.0,
             params={
                 "command_name": "base_velocity_pose",
-                "asset_cfg": SceneEntityCfg("robot", joint_names=DOG_JOINT_NAMES),
+                "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
                 "stand_still_scale": 5.0,
                 "velocity_threshold": 0.5,
                 "velocity_cmd_threshold": 0.1,

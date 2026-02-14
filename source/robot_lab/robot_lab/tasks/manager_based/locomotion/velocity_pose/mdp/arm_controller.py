@@ -136,6 +136,14 @@ class ARX5TrajectoryController:
         #     print(f"  timesteps: {self.timesteps[:5]}")  # First 5 envs
         #     print(f"{'='*80}\n")
         
+        # CRITICAL: In Stage 1, keep arm fixed at zero position (no motion)
+        # This prevents arm swinging due to base motion and helps dog learn stable locomotion
+        if env is not None and hasattr(env, "_curriculum_stage"):
+            current_stage = env._curriculum_stage
+            if current_stage == 1:
+                # Return zero actions - arm stays at initial position (all joints at 0)
+                return torch.zeros((self.num_envs, 6), device=self.device)
+        
         arm_actions = torch.zeros((self.num_envs, 6), device=self.device)
         
         # Compute time in seconds

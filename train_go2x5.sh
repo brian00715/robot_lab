@@ -7,4 +7,5 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --num_envs=4096 \
   --headless \
   --video \
-  --video_interval=24000 
+  --video_interval=24000 \
+  --run_name=go2x5_joint_mapping_fixed

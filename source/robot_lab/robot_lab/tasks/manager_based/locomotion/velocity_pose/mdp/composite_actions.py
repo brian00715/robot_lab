@@ -61,15 +61,103 @@ class DogArmCompositeAction(ActionTerm):
         
         # Store joint indices
         if self._has_arm:
-            # Assume first 12 joints are dog, next 6 are arm
-            self._dog_joint_ids = list(range(12))
-            self._arm_joint_ids = list(range(12, 18))
-            print(f"[DogArmCompositeAction] Dog joint IDs: {self._dog_joint_ids}")
-            print(f"[DogArmCompositeAction] Arm joint IDs: {self._arm_joint_ids}")
-        
-        # Use default scale and offset (will be applied through PD controller)
-        self._scale = 0.25
-        self._offset = 0.0
+            # CRITICAL FIX: Map DOG_JOINT_NAMES order to URDF order
+            # DOG_JOINT_NAMES (policy output order): FR, FL, RR, RL
+            # URDF order: FL, FR, RL, RR
+            # We need to reorder policy actions to match URDF
+            
+            # Get all joint names from asset
+            all_joint_names = self._asset.joint_names
+            # print(f"[DogArmCompositeAction] All URDF joints: {all_joint_names}")
+            
+            # Define expected policy output order (from DOG_JOINT_NAMES in rough_env_cfg.py)
+            policy_joint_order = [
+                "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+            ]
+            
+            # Filter to get only dog joint names (exclude arm joints)
+            dog_joint_names_urdf = [name for name in all_joint_names 
+                                    if any(leg in name for leg in ['FL_', 'FR_', 'RL_', 'RR_'])]
+            # print(f"[DogArmCompositeAction] Dog joints in URDF: {dog_joint_names_urdf}")
+            
+            # Create mapping: policy_index -> urdf_dog_index
+            # We need to map policy order to the actual indices in all_joint_names
+            self._policy_to_urdf_mapping = []
+            self._dog_joint_ids = []  # Store actual indices in all_joint_names
+            
+            for policy_joint_name in policy_joint_order:
+                try:
+                    # Find the actual index in all_joint_names
+                    urdf_global_index = all_joint_names.index(policy_joint_name)
+                    self._dog_joint_ids.append(urdf_global_index)
+                    # Find position within dog_joint_names_urdf for reordering
+                    urdf_dog_index = dog_joint_names_urdf.index(policy_joint_name)
+                    self._policy_to_urdf_mapping.append(urdf_dog_index)
+                except ValueError:
+                    raise ValueError(f"Joint {policy_joint_name} not found in URDF!")
+            
+            # print(f"\n{'='*80}")
+            # print("[DogArmCompositeAction] JOINT MAPPING INITIALIZATION")
+            # print(f"{'='*80}")
+            # print(f"Policy-to-URDF mapping: {self._policy_to_urdf_mapping}")
+            # print("\nDetailed Mapping:")
+            # policy_names = ["FR_hip", "FR_thigh", "FR_calf", "FL_hip", "FL_thigh", "FL_calf",
+            #                 "RR_hip", "RR_thigh", "RR_calf", "RL_hip", "RL_thigh", "RL_calf"]
+            # for policy_idx, (urdf_idx, name) in enumerate(zip(self._policy_to_urdf_mapping, policy_names)):
+            #     urdf_name = dog_joint_names_urdf[urdf_idx]
+            #     print(f"  Policy[{policy_idx:2d}] {name:12s} -> URDF[{urdf_idx:2d}] {urdf_name}")
+            
+            # Verify critical mappings
+            # print("\nCritical Verification:")
+            # print(f"  Policy FR_hip (idx 0) -> Dog[{self._policy_to_urdf_mapping[0]}] Global[{self._dog_joint_ids[0]}]")
+            # print(f"  Policy FL_hip (idx 3) -> Dog[{self._policy_to_urdf_mapping[3]}] Global[{self._dog_joint_ids[3]}]")
+            # print(f"  Policy RR_hip (idx 6) -> Dog[{self._policy_to_urdf_mapping[6]}] Global[{self._dog_joint_ids[6]}]")
+            # print(f"  Policy RL_hip (idx 9) -> Dog[{self._policy_to_urdf_mapping[9]}] Global[{self._dog_joint_ids[9]}]")
+            # print(f"{'='*80}\n")
+            
+            # Arm joint IDs - find joints that are not dog joints
+            self._arm_joint_ids = [i for i, name in enumerate(all_joint_names) 
+                                   if i not in self._dog_joint_ids]
+            print(f"[DogArmCompositeAction] Joint mapping initialized: {len(self._dog_joint_ids)} dog joints, {len(self._arm_joint_ids)} arm joints")
+            
+            # CRITICAL: Process scale configuration for dog joints
+            # Isaac Lab's ActionTerm doesn't handle regex dict scale for composite actions
+            # We need to manually process it
+            dog_joint_names = [all_joint_names[i] for i in self._dog_joint_ids]
+            
+            if hasattr(cfg, 'scale') and isinstance(cfg.scale, dict):
+                # Process scale dict
+                scale_values = []
+                for joint_name in dog_joint_names:
+                    # Check each pattern in scale dict
+                    scale_val = 0.25  # default
+                    for pattern, val in cfg.scale.items():
+                        import re
+                        if re.match(pattern, joint_name):
+                            scale_val = val
+                            break
+                    scale_values.append(scale_val)
+                
+                self._dog_scale = torch.tensor(scale_values, device=env.device)
+                print(f"[DogArmCompositeAction] Processed dog joint scales: {scale_values}")
+            else:
+                # Use uniform scale
+                scale_val = getattr(cfg, 'scale', 0.25) if not isinstance(getattr(cfg, 'scale', 0.25), dict) else 0.25
+                self._dog_scale = torch.full((12,), scale_val, device=env.device)
+                print(f"[DogArmCompositeAction] Using uniform scale: {scale_val}")
+            
+            # CRITICAL FIX: Use default joint positions as offset (in policy order!)
+            # Extract default positions for dog joints in the policy output order
+            default_positions = self._asset.data.default_joint_pos[0, self._dog_joint_ids]
+            self._dog_offset = default_positions.clone()
+            print(f"[DogArmCompositeAction] Dog joint offsets (policy order): {self._dog_offset.cpu().numpy()}")
+        else:
+            # For dog-only mode, use parent class processing
+            # Parent ActionTerm will handle _scale and _offset
+            pass
         
         # Debug counter
         self._step_counter = 0
@@ -147,21 +235,47 @@ class DogArmCompositeAction(ActionTerm):
             #     print(f"  Arm actions std: {arm_actions.std(dim=0).cpu().numpy()}")
             
             # Apply scale to dog actions only (arm uses full trajectory output)
-            scaled_dog_actions = self._offset + self._scale * dog_actions
+            # Use per-joint scale tensor (handles different scales for hip vs other joints)
+            scaled_dog_actions = self._dog_offset + self._dog_scale * dog_actions
             
-            # Check total joint count to handle gripper joints
+            # CRITICAL FIX: Create full action vector with correct indices
+            # Dog joints may not be at indices 0-11 in URDF
+            # We need to place each policy action at its correct global index
+            
             num_joints = self._asset.num_joints
+            full_actions = torch.zeros(dog_actions.shape[0], num_joints, device=dog_actions.device)
             
-            if num_joints == 20:
-                # 12 dog + 6 arm + 2 gripper = 20 joints
-                # Add zero actions for gripper (keep them fixed)
-                gripper_actions = torch.zeros(dog_actions.shape[0], 2, device=dog_actions.device)
-                # Combine: scaled dog actions + full arm actions + zero gripper actions
-                self._processed_actions = torch.cat([scaled_dog_actions, arm_actions, gripper_actions], dim=1)
-            else:
-                # 12 dog + 6 arm = 18 joints (no gripper)
-                # Combine: scaled dog actions + full arm actions
-                self._processed_actions = torch.cat([scaled_dog_actions, arm_actions], dim=1)
+            # Place dog actions at their correct global indices
+            # policy_idx corresponds to DOG_JOINT_NAMES order
+            # self._dog_joint_ids[policy_idx] is the global URDF index
+            for policy_idx in range(len(self._dog_joint_ids)):
+                global_idx = self._dog_joint_ids[policy_idx]
+                full_actions[:, global_idx] = scaled_dog_actions[:, policy_idx]
+            
+            # Place arm actions at their correct global indices
+            for arm_action_idx, global_idx in enumerate(self._arm_joint_ids):
+                if arm_action_idx < arm_actions.shape[1]:  # Within arm action dimensions
+                    full_actions[:, global_idx] = arm_actions[:, arm_action_idx]
+            
+            # Debug first 10 steps to verify mapping works correctly (VERIFIED - DISABLED)
+            # if self._step_counter <= 10:
+            #     env_idx = 0  # Monitor first environment
+            #     print(f"\n[Step {self._step_counter}] Action Mapping Verification (env {env_idx}):")
+            #     print(f"  Policy outputs (12D dog actions):")
+            #     print(f"    FR_hip={scaled_dog_actions[env_idx, 0]:.4f}, FR_thigh={scaled_dog_actions[env_idx, 1]:.4f}, FR_calf={scaled_dog_actions[env_idx, 2]:.4f}")
+            #     print(f"    FL_hip={scaled_dog_actions[env_idx, 3]:.4f}, FL_thigh={scaled_dog_actions[env_idx, 4]:.4f}, FL_calf={scaled_dog_actions[env_idx, 5]:.4f}")
+            #     print(f"    RR_hip={scaled_dog_actions[env_idx, 6]:.4f}, RR_thigh={scaled_dog_actions[env_idx, 7]:.4f}, RR_calf={scaled_dog_actions[env_idx, 8]:.4f}")
+            #     print(f"    RL_hip={scaled_dog_actions[env_idx, 9]:.4f}, RL_thigh={scaled_dog_actions[env_idx, 10]:.4f}, RL_calf={scaled_dog_actions[env_idx, 11]:.4f}")
+            #     
+            #     all_joint_names = self._asset.joint_names
+            #     print(f"  Mapped to global URDF indices:")
+            #     for policy_idx in range(min(12, len(self._dog_joint_ids))):
+            #         global_idx = self._dog_joint_ids[policy_idx]
+            #         joint_name = all_joint_names[global_idx]
+            #         value = full_actions[env_idx, global_idx]
+            #         print(f"    Policy[{policy_idx:2d}] -> Global[{global_idx:2d}] {joint_name:20s} = {value:.4f}")
+
+            self._processed_actions = full_actions
             
         else:
             # Standard dog-only control
