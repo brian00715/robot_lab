@@ -42,8 +42,15 @@ parser.add_argument(
     "--curriculum_stage",
     type=int,
     default=4,
-    choices=[1, 2, 3, 4],
-    help="Curriculum stage to use for inference (1=base, 2=small range, 3=medium range, 4=max range). Default: 4",
+    choices=[1, 2, 3, 4, 5],
+    help="Curriculum stage to use for inference (1=base, 2=small range, 3=medium range, 4=max range, 5=extreme). Default: 4",
+)
+parser.add_argument(
+    "--arm_actions_idx",
+    type=int,
+    default=None,
+    choices=[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    help="Force specific arm motion mode for all environments (0=circular, 1=figure_eight, 2=sinusoidal, 3=random_walk, 4=reach_points, 5=fishing, 6=grasping, 7=swinging, 8=probing). If not specified, uses random cyclic assignment.",
 )
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
@@ -163,6 +170,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # This allows DogArmCompositeAction to initialize with correct stage
     env_cfg.inference_mode = True
     env_cfg.inference_stage = args_cli.curriculum_stage
+    
+    # Set fixed arm action mode if specified (must be done BEFORE env creation)
+    if args_cli.arm_actions_idx is not None:
+        env_cfg.fixed_arm_mode_idx = args_cli.arm_actions_idx
+        mode_names = ["circular", "figure_eight", "sinusoidal", "random_walk", "reach_points", 
+                      "fishing", "grasping", "swinging", "probing"]
+        print(f"[INFO] Fixed Arm Motion Mode: {mode_names[args_cli.arm_actions_idx]} (index {args_cli.arm_actions_idx})")
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -199,7 +213,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         1: "Stage 1 (Base): Height/pose fixed at default, velocity control only",
         2: "Stage 2 (Small): ±3cm height, ±8° roll",
         3: "Stage 3 (Medium): ±10cm height, ±20° roll, ±12° pitch",
-        4: "Stage 4 (Maximum): ±15cm height, ±30° roll, ±15° pitch"
+        4: "Stage 4 (Maximum): ±15cm height, ±30° roll, ±15° pitch",
+        5: "Stage 5 (Extreme): Same as Stage 4 but with 1.5x arm motion amplitude"
     }
     print(f"[INFO] Curriculum Stage for Inference: {stage_descriptions[args_cli.curriculum_stage]}")
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# source ~/miniconda3/etc/profile.d/conda.sh
+source ~/miniconda3/etc/profile.d/conda.sh
 conda activate isaaclab230
 
 python scripts/reinforcement_learning/rsl_rl/train.py \
@@ -8,6 +8,9 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --headless \
   --video \
   --video_interval=24000 \
-  --run_name=go2x5_curriculum_stage_5 \
-  --max_iterations=40000
+  --resume \
+  --load_run=2026-02-16_01-03-18_go2x5_curriculum_stage_5 \
+  --checkpoint=model_25000.pt \
+  --run_name=go2x5_stage_5_continue \
+  --max_iterations=15000 
 

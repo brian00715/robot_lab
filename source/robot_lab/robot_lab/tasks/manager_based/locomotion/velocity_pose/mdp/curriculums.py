@@ -8,8 +8,9 @@ This module implements a fixed-iteration stage-based curriculum:
 - Stage 1 (0-20,000 iterations): Base training - Height and pose commands fixed at default (roll=0°, pitch=0°, yaw=0°, height=0.33m)
 - Stage 2 (20,000-25,000 iterations): Small range - Height and pose commands with limited variation (±3cm height, ±8° roll, pitch=0°, yaw=0°)
 - Stage 3 (25,000-30,000 iterations): Medium range for height and pose commands (±10cm height, ±35° roll, ±20° pitch, yaw=0°)
-- Stage 4 (30,000+ iterations): Large range for height and pose commands (±12.5cm height, ±45° roll, ±25° pitch, yaw=0°)
+- Stage 4 (30,000-35,000 iterations): Large range for height and pose commands (±12.5cm height, ±45° roll, ±25° pitch, yaw=0°)
   * Stage 4 ranges based on real robot rosbag analysis (2026-01-28): real robot achieved roll [-40.73°, +39.05°], pitch [-23.29°, +24.91°]
+- Stage 5 (35,000+ iterations): Same as Stage 4, but with 1.5x arm motion amplitude for extreme disturbance training
 
 NOTE: Yaw is ALWAYS fixed at 0° to decouple from localization systems. Only roll and pitch are tracked,
 which can be determined from IMU gravity projection alone without external localization.
@@ -162,6 +163,41 @@ def _update_reward_parameters(env: ManagerBasedRLEnv, stage: int):
 
     # Stage 4: Very strict tracking with very high weight, upward remains disabled
     elif stage == 4:
+        if height_reward_cfg:
+            height_reward_cfg.params["std"] = math.sqrt(0.05)  
+            height_reward_cfg.weight = 16.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_height_exp"] = 16.0
+        
+        # Orientation tracking: very strict tolerance, very high weight
+        if orient_reward_cfg:
+            orient_reward_cfg.params["std"] = math.sqrt(0.10) 
+            orient_reward_cfg.weight = 16.0
+            if hasattr(env.reward_manager, '_term_weights'):
+                env.reward_manager._term_weights["track_orientation_exp"] = 16.0
+        
+        # Yaw control: very strict tolerance (near-zero yaw drift tolerance)
+        if ang_vel_z_tracking_cfg:
+            ang_vel_z_tracking_cfg.params["std"] = math.sqrt(0.015)  
+        
+        # Keep locomotion penalties disabled
+        if lin_vel_z_l2_cfg:
+            lin_vel_z_l2_cfg.weight = 0.0
+        if ang_vel_xy_l2_cfg:
+            ang_vel_xy_l2_cfg.weight = 0.0
+        
+        # Keep upward disabled
+        if upward_cfg:
+            upward_cfg.weight = 0.0
+        
+        # Anti-spin when standing: moderate control (5° tolerance)
+        # NOTE: Function returns negative values, so weight should be POSITIVE
+        if accumulated_ang_vel_cfg:
+            accumulated_ang_vel_cfg.weight = 1.5
+            accumulated_ang_vel_cfg.params["angle_std"] = math.radians(5)
+
+    # Stage 5: Same as Stage 4, but with 1.5x arm motion amplitude (extreme disturbance)
+    elif stage == 5:
         if height_reward_cfg:
             height_reward_cfg.params["std"] = math.sqrt(0.05)  
             height_reward_cfg.weight = 16.0
@@ -361,8 +397,9 @@ def command_curriculum_height_pose(
             expected_stage_for_iter = (
                 1 if total_iterations < 20000 else  
                 2 if total_iterations < 25000 else  
-                3 if total_iterations < 30000 else  
-                4  
+                3 if total_iterations < 30000 else
+                4 if total_iterations < 35000 else
+                5
             )
             if env._curriculum_stage != expected_stage_for_iter:  
                 if not hasattr(env, '_curriculum_resume_warning_shown'):
@@ -438,7 +475,12 @@ def command_curriculum_height_pose(
             roll_range = (-0.611, 0.611)  
             pitch_range = (-0.349, 0.349)  
             yaw_range = (0.0, 0.0)
-        else:  
+        elif target_stage == 4:
+            height_range = (0.18, 0.43)  
+            roll_range = (-0.524, 0.524)  
+            pitch_range = (-0.262, 0.262)  
+            yaw_range = (0.0, 0.0)
+        else:  # Stage 5
             height_range = (0.18, 0.43)  
             roll_range = (-0.524, 0.524)  
             pitch_range = (-0.262, 0.262)  
@@ -473,8 +515,14 @@ def command_curriculum_height_pose(
         roll_range = (-0.611, 0.611)  
         pitch_range = (-0.349, 0.349)  
         yaw_range = (0.0, 0.0)  
-    else:  # Stage 4: Maximum range (30k+ iterations)
+    elif total_iterations < 35000:  # Stage 4: Maximum range (30k-35k iterations)
         target_stage = 4
+        height_range = (0.18, 0.43)  
+        roll_range = (-0.785, 0.785)  
+        pitch_range = (-0.436, 0.436)  
+        yaw_range = (0.0, 0.0)
+    else:  # Stage 5: Same as Stage 4 but with 1.5x arm motion (35k+ iterations)
+        target_stage = 5
         height_range = (0.18, 0.43)  
         roll_range = (-0.785, 0.785)  
         pitch_range = (-0.436, 0.436)  

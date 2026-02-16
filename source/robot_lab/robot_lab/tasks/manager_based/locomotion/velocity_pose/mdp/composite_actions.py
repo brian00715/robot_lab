@@ -63,10 +63,26 @@ class DogArmCompositeAction(ActionTerm):
                     initial_stage = env.unwrapped._inference_curriculum_stage
                     print(f"[DogArmCompositeAction] Detected inference stage from unwrapped: {initial_stage}")
                 
+                # Check for fixed arm mode index (from play.py --arm_actions_idx)
+                fixed_mode_idx = None
+                if hasattr(env.cfg, 'fixed_arm_mode_idx') and env.cfg.fixed_arm_mode_idx is not None:
+                    # From env_cfg (set by play.py BEFORE environment creation)
+                    fixed_mode_idx = env.cfg.fixed_arm_mode_idx
+                    mode_names = ["circular", "figure_eight", "sinusoidal", "random_walk", "reach_points",
+                                  "fishing", "grasping", "swinging", "probing"]
+                    print(f"[DogArmCompositeAction] Fixed arm mode: {mode_names[fixed_mode_idx]} (index {fixed_mode_idx})")
+                elif hasattr(env.unwrapped, '_fixed_arm_mode_idx'):
+                    # Fallback: from unwrapped env (for backward compatibility)
+                    fixed_mode_idx = env.unwrapped._fixed_arm_mode_idx
+                    mode_names = ["circular", "figure_eight", "sinusoidal", "random_walk", "reach_points",
+                                  "fishing", "grasping", "swinging", "probing"]
+                    print(f"[DogArmCompositeAction] Fixed arm mode: {mode_names[fixed_mode_idx]} (index {fixed_mode_idx})")
+                
                 self._arm_controller = create_arm_controller(
                     num_envs=env.num_envs,
                     device=env.device,
-                    stage=initial_stage  # Use detected or default stage
+                    stage=initial_stage,  # Use detected or default stage
+                    fixed_mode_idx=fixed_mode_idx  # Pass fixed mode if specified
                 )
                 print(f"[DogArmCompositeAction] Initialized arm controller for {env.num_envs} envs at stage {initial_stage}")
             except Exception as e:
