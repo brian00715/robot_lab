@@ -300,7 +300,14 @@ def arm_joint_pos_rel(
     joint_pos = asset.data.joint_pos[:, asset_cfg.joint_ids]
     joint_pos_default = asset.data.default_joint_pos[:, asset_cfg.joint_ids]
     
-    return joint_pos - joint_pos_default
+    pos_rel = joint_pos - joint_pos_default
+    
+    # NUMERICAL STABILITY FIX: Clip extreme positions to prevent observation explosion
+    # ARX5 joints have typical range ±π, extreme cases might reach ±2π
+    # Clip at ±3π for safety without affecting normal motion
+    pos_rel = torch.clamp(pos_rel, -3.0 * 3.14159, 3.0 * 3.14159)
+    
+    return pos_rel
 
 
 def arm_joint_vel_rel(
@@ -318,7 +325,16 @@ def arm_joint_vel_rel(
     """
     asset: Articulation = env.scene[asset_cfg.name]
     
-    return asset.data.joint_vel[:, asset_cfg.joint_ids]
+    joint_vel = asset.data.joint_vel[:, asset_cfg.joint_ids]
+    
+    # NUMERICAL STABILITY FIX: Clip extreme velocities to prevent observation explosion
+    # Without this, new arm motion modes (fishing/grasping/swinging/probing) can generate
+    # extreme velocities that cause critic network to output huge values, leading to
+    # value function loss explosion (e.g., 9.23×10²⁸ at iteration 26430)
+    # Typical arm velocities: ±5 rad/s, extreme: ±20 rad/s, so clip at ±50 rad/s for safety
+    joint_vel = torch.clamp(joint_vel, -50.0, 50.0)
+    
+    return joint_vel
 
 
 def arm_end_effector_position_relative(

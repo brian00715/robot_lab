@@ -8,6 +8,6 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --headless \
   --video \
   --video_interval=24000 \
-  --run_name=go2x5_curriculum_stage_5 \
+  --run_name=go2x5_curriculum_motion_scale_transplant \
   --max_iterations=40000
 

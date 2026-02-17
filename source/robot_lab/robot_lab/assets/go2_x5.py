@@ -27,7 +27,7 @@ GO2_X5_CFG = ArticulationCfg(
             ".*R_hip_joint": -0.1,
             ".*L_hip_joint": 0.1,
             "F[L,R]_thigh_joint": 0.8,
-            "R[L,R]_thigh_joint": 0.8,
+            "R[L,R]_thigh_joint": 1.0,
             ".*_calf_joint": -1.5,
             "joint1": 0.0,
             "joint2": 0.0,

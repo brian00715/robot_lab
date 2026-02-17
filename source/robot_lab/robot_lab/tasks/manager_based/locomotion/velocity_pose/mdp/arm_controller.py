@@ -183,10 +183,10 @@ class ARX5TrajectoryController:
     
     def generate_arm_action(self, env: ManagerBasedRLEnv | None = None) -> torch.Tensor:
         """Generate arm joint target positions for current timestep.
-        
+
         Args:
-            env: Optional environment instance (for future use).
-        
+            env: Optional environment instance (for curriculum control).
+
         Returns:
             Arm actions (num_envs, 6) - target joint positions in radians.
         """
@@ -200,22 +200,26 @@ class ARX5TrajectoryController:
         #     print(f"  dt: {self.dt}")
         #     print(f"  timesteps: {self.timesteps[:5]}")  # First 5 envs
         #     print(f"{'='*80}\n")
-        
-        # CRITICAL: Update motion_scale based on current curriculum stage
+
+        # CRITICAL: Get motion_scale from curriculum (managed in curriculums.py)
         # This allows arm motion to increase with training difficulty
-        if env is not None and hasattr(env, "_curriculum_stage"):
-            current_stage = env._curriculum_stage
-            
-            # Update motion scale if stage changed
-            if not hasattr(self, "_last_stage") or self._last_stage != current_stage:
-                self._last_stage = current_stage
-                self.update_curriculum(current_stage)
-            
-            # In Stage 1, keep arm fixed at zero position (no motion)
-            if current_stage == 1:
+        if env is not None and hasattr(env, "_arm_motion_scale"):
+            # Use curriculum-managed motion scale
+            current_motion_scale = env._arm_motion_scale
+
+            # In Stage 1 (motion_scale=0), keep arm fixed at zero position
+            if current_motion_scale == 0.0:
                 # Return zero actions - arm stays at initial position (all joints at 0)
                 return torch.zeros((self.num_envs, 6), device=self.device)
-        
+
+            # Update local motion_scale if changed
+            if self.motion_scale != current_motion_scale:
+                self.motion_scale = current_motion_scale
+        else:
+            # Fallback: No curriculum control, use initialization value
+            if self.motion_scale == 0.0:
+                return torch.zeros((self.num_envs, 6), device=self.device)
+
         arm_actions = torch.zeros((self.num_envs, 6), device=self.device)
         
         # Compute time in seconds
@@ -671,36 +675,23 @@ class ARX5TrajectoryController:
         
         # Update steps (vectorized)
         self.probing_steps[env_indices] += 1
-        
+
         return result
-    
+
     def update_curriculum(self, stage: int):
-        """Update motion parameters based on curriculum stage.
-        
+        """[DEPRECATED] Update motion parameters based on curriculum stage.
+
+        NOTE: This method is now deprecated. Curriculum parameters are managed
+        centrally in curriculums.py and accessed via env._arm_motion_scale.
+
         Args:
             stage: Current training stage (1-5).
         """
-        if stage == 1:
-            # Stage 1: No motion (arm fixed at zero position)
-            self.motion_scale = 0.0
-            # print(f"[ARX5Controller] Stage 1: motion_scale = {self.motion_scale} (arm fixed)")
-        elif stage == 2:
-            # Stage 2: Moderate motion
-            self.motion_scale = 1.2
-            # print(f"[ARX5Controller] Stage 2: motion_scale = {self.motion_scale}")
-        elif stage == 3:
-            # Stage 3: Active motion
-            self.motion_scale = 1.8
-            # print(f"[ARX5Controller] Stage 3: motion_scale = {self.motion_scale}")
-        elif stage == 4:
-            # Stage 4: Maximum motion
-            self.motion_scale = 2.5
-            # print(f"[ARX5Controller] Stage 4: motion_scale = {self.motion_scale}")
-        else:
-            # Stage 5: Extreme motion (1.5x Stage 4)
-            self.motion_scale = 3.75
-            # print(f"[ARX5Controller] Stage 5: motion_scale = {self.motion_scale} (extreme disturbance)")
-    
+        # DEPRECATED: Motion scale is now managed by curriculums.py
+        # This method is kept for backward compatibility but does nothing
+        # The generate_arm_action() method reads from env._arm_motion_scale instead
+        pass
+
     def get_motion_info(self) -> dict:
         """Get information about current motion state.
         
@@ -722,38 +713,48 @@ def create_arm_controller(
     fixed_mode_idx: int | None = None,
 ) -> ARX5TrajectoryController:
     """Factory function to create an arm trajectory controller.
-    
+
+    NOTE: Stage-specific parameters (motion_scale, frequency_range, amplitude_range)
+    are now managed centrally in curriculums.py and accessed via env attributes:
+    - env._arm_motion_scale
+    - env._arm_frequency_range
+    - env._arm_amplitude_range
+
+    This function still provides initial values for backward compatibility,
+    but during training these will be overridden by curriculum system.
+
     Args:
         num_envs: Number of parallel environments.
         device: Device to run on.
-        stage: Initial curriculum stage (1-5).
+        stage: Initial curriculum stage (1-5) - used for initialization only.
         fixed_mode_idx: If set, forces all environments to use this mode index.
-    
+
     Returns:
         Initialized ARX5TrajectoryController.
     """
-    # Stage-specific parameters - INCREASED RANGE for more visible arm motion
+    # Stage-specific parameters - FOR INITIALIZATION ONLY
+    # During training, these are managed by curriculums.py
     if stage == 1:
-        motion_scale = 0 
-        frequency_range = (0.3, 0.8)  
-        amplitude_range = (0.3, 0.6)  
+        motion_scale = 0.0
+        frequency_range = (0.3, 0.8)
+        amplitude_range = (0.3, 0.6)
     elif stage == 2:
-        motion_scale = 1.2  
-        frequency_range = (0.5, 1.2)  
-        amplitude_range = (0.4, 0.8) 
+        motion_scale = 1.2
+        frequency_range = (0.5, 1.2)
+        amplitude_range = (0.4, 0.8)
     elif stage == 3:
-        motion_scale = 1.8  
-        frequency_range = (0.8, 1.8)  
-        amplitude_range = (0.5, 1.0)  
+        motion_scale = 1.8
+        frequency_range = (0.8, 1.8)
+        amplitude_range = (0.5, 1.0)
     elif stage == 4:
-        motion_scale = 2.5 
-        frequency_range = (1.0, 2.5) 
+        motion_scale = 2.5
+        frequency_range = (1.0, 2.5)
         amplitude_range = (0.6, 1.2)
     else:  # stage >= 5
         motion_scale = 3.75  # 1.5x Stage 4
-        frequency_range = (1.0, 2.5) 
+        frequency_range = (1.0, 2.5)
         amplitude_range = (0.9, 1.8)  # 1.5x Stage 4
-    
+
     controller = ARX5TrajectoryController(
         num_envs=num_envs,
         device=device,
@@ -762,5 +763,5 @@ def create_arm_controller(
         amplitude_range=amplitude_range,
         fixed_mode_idx=fixed_mode_idx,
     )
-    
+
     return controller

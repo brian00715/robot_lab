@@ -451,40 +451,58 @@ def command_curriculum_height_pose(
     # FORCE Stage 1 at iteration 0 to avoid incorrect initialization
     if total_iterations == 0 and not is_inference_mode:
         target_stage = 1
-        height_range = (default_height, default_height)  
-        roll_range = (0.0, 0.0) 
-        pitch_range = (0.0, 0.0)  
-        yaw_range = (0.0, 0.0)  
+        height_range = (default_height, default_height)
+        roll_range = (0.0, 0.0)
+        pitch_range = (0.0, 0.0)
+        yaw_range = (0.0, 0.0)
+        arm_motion_scale = 0.0
+        arm_frequency_range = (0.3, 0.8)
+        arm_amplitude_range = (0.3, 0.6)
     elif is_inference_mode:
         # Use the requested inference stage (from --curriculum_stage argument)
         target_stage = inference_stage
-        
+
         # Set ranges based on the requested stage
-        if target_stage == 1:  
+        if target_stage == 1:
             height_range = (default_height, default_height)
             roll_range = (0.0, 0.0)
             pitch_range = (0.0, 0.0)
             yaw_range = (0.0, 0.0)
-        elif target_stage == 2: 
-            height_range = (0.30, 0.36)  
-            roll_range = (-0.14, 0.14)  
+            arm_motion_scale = 0.0
+            arm_frequency_range = (0.3, 0.8)
+            arm_amplitude_range = (0.3, 0.6)
+        elif target_stage == 2:
+            height_range = (0.30, 0.36)
+            roll_range = (-0.14, 0.14)
             pitch_range = (0.0, 0.0)
             yaw_range = (0.0, 0.0)
-        elif target_stage == 3:  
-            height_range = (0.23, 0.43) 
-            roll_range = (-0.611, 0.611)  
-            pitch_range = (-0.349, 0.349)  
+            arm_motion_scale = 1.2
+            arm_frequency_range = (0.5, 1.2)
+            arm_amplitude_range = (0.4, 0.8)
+        elif target_stage == 3:
+            height_range = (0.23, 0.43)
+            roll_range = (-0.611, 0.611)
+            pitch_range = (-0.349, 0.349)
             yaw_range = (0.0, 0.0)
+            arm_motion_scale = 1.8
+            arm_frequency_range = (0.8, 1.8)
+            arm_amplitude_range = (0.5, 1.0)
         elif target_stage == 4:
-            height_range = (0.18, 0.43)  
-            roll_range = (-0.524, 0.524)  
-            pitch_range = (-0.262, 0.262)  
+            height_range = (0.18, 0.43)
+            roll_range = (-0.524, 0.524)
+            pitch_range = (-0.262, 0.262)
             yaw_range = (0.0, 0.0)
+            arm_motion_scale = 2.5
+            arm_frequency_range = (1.0, 2.5)
+            arm_amplitude_range = (0.6, 1.2)
         else:  # Stage 5
-            height_range = (0.18, 0.43)  
-            roll_range = (-0.524, 0.524)  
-            pitch_range = (-0.262, 0.262)  
-            yaw_range = (0.0, 0.0)  
+            height_range = (0.18, 0.43)
+            roll_range = (-0.524, 0.524)
+            pitch_range = (-0.262, 0.262)
+            yaw_range = (0.0, 0.0)
+            arm_motion_scale = 3.75
+            arm_frequency_range = (1.0, 2.5)
+            arm_amplitude_range = (0.9, 1.8)
 
         # Print message only once per session
         if not hasattr(env, "_curriculum_inference_message_shown"):
@@ -496,52 +514,80 @@ def command_curriculum_height_pose(
             print(f"  Roll Range:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
             print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
             print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
+            print(f"  Arm Motion Scale: {arm_motion_scale:.2f}")
+            print(f"  Arm Frequency Range: [{arm_frequency_range[0]:.1f}, {arm_frequency_range[1]:.1f}] Hz")
+            print(f"  Arm Amplitude Range: [{arm_amplitude_range[0]:.1f}, {arm_amplitude_range[1]:.1f}] rad")
             print(f"{'='*80}\n")
     elif total_iterations < 20000:  # Stage 1: Base training (0-20k iterations)
         target_stage = 1
         height_range = (default_height, default_height)  
         roll_range = (0.0, 0.0) 
         pitch_range = (0.0, 0.0)  
-        yaw_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)
+        # Arm motion parameters - Stage 1: No motion
+        arm_motion_scale = 0.0
+        arm_frequency_range = (0.3, 0.8)
+        arm_amplitude_range = (0.3, 0.6)
     elif total_iterations < 25000:  # Stage 2: Height variation (20k-25k iterations)
         target_stage = 2
         height_range = (0.30, 0.36) 
         roll_range = (-0.14, 0.14)  
         pitch_range = (0.0, 0.0)  
-        yaw_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)
+        # Arm motion parameters - Stage 2: Moderate motion
+        arm_motion_scale = 1.2
+        arm_frequency_range = (0.5, 1.2)
+        arm_amplitude_range = (0.4, 0.8)
     elif total_iterations < 30000:  # Stage 3: Full pose control (25k-30k iterations)
         target_stage = 3
         height_range = (0.23, 0.43)  
         roll_range = (-0.611, 0.611)  
         pitch_range = (-0.349, 0.349)  
-        yaw_range = (0.0, 0.0)  
+        yaw_range = (0.0, 0.0)
+        # Arm motion parameters - Stage 3: Active motion
+        arm_motion_scale = 1.8
+        arm_frequency_range = (0.8, 1.8)
+        arm_amplitude_range = (0.5, 1.0)
     elif total_iterations < 35000:  # Stage 4: Maximum range (30k-35k iterations)
         target_stage = 4
         height_range = (0.18, 0.43)  
         roll_range = (-0.785, 0.785)  
         pitch_range = (-0.436, 0.436)  
         yaw_range = (0.0, 0.0)
+        # Arm motion parameters - Stage 4: High motion
+        arm_motion_scale = 2.5
+        arm_frequency_range = (1.0, 2.5)
+        arm_amplitude_range = (0.6, 1.2)
     else:  # Stage 5: Same as Stage 4 but with 1.5x arm motion (35k+ iterations)
         target_stage = 5
         height_range = (0.18, 0.43)  
         roll_range = (-0.785, 0.785)  
         pitch_range = (-0.436, 0.436)  
-        yaw_range = (0.0, 0.0) 
+        yaw_range = (0.0, 0.0)
+        # Arm motion parameters - Stage 5: Extreme motion (1.5x Stage 4)
+        arm_motion_scale = 3.75
+        arm_frequency_range = (1.0, 2.5)
+        arm_amplitude_range = (0.9, 1.8) 
     
     # Initialize curriculum state on first call, using the target_stage we just determined
     if not hasattr(env, "_curriculum_stage"):
-        env._curriculum_stage = target_stage  
-        env._curriculum_last_update = 0  
-        
+        env._curriculum_stage = target_stage
+        env._curriculum_last_update = 0
+
         # IMPORTANT: Set initial command ranges based on starting stage
         ranges.height = height_range
         ranges.roll = roll_range
         ranges.pitch = pitch_range
         ranges.yaw = yaw_range
-        
+
+        # Store arm motion parameters in env for arm controller to access
+        env._arm_motion_scale = arm_motion_scale
+        env._arm_frequency_range = arm_frequency_range
+        env._arm_amplitude_range = arm_amplitude_range
+
         # Set initial reward parameters based on starting stage
         _update_reward_parameters(env, target_stage)
-        
+
         print(f"\n{'='*80}")
         print(f"[Curriculum] Initialized at iteration {total_iterations}")
         print(f"  Starting Stage: {target_stage}")
@@ -549,23 +595,31 @@ def command_curriculum_height_pose(
         print(f"  Roll Range:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
         print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
         print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
+        print(f"  Arm Motion Scale: {arm_motion_scale:.2f}")
+        print(f"  Arm Frequency Range: [{arm_frequency_range[0]:.1f}, {arm_frequency_range[1]:.1f}] Hz")
+        print(f"  Arm Amplitude Range: [{arm_amplitude_range[0]:.1f}, {arm_amplitude_range[1]:.1f}] rad")
         _print_reward_parameters(env)
         print(f"{'='*80}\n")
-    
+
     # Update ranges if stage changed
-    if target_stage != env._curriculum_stage:  
-        env._curriculum_stage = target_stage  
-        env._curriculum_last_update = total_iterations  
-        
+    if target_stage != env._curriculum_stage:
+        env._curriculum_stage = target_stage
+        env._curriculum_last_update = total_iterations
+
         # Update command ranges
         ranges.height = height_range
         ranges.roll = roll_range
         ranges.pitch = pitch_range
         ranges.yaw = yaw_range
-        
+
+        # Update arm motion parameters
+        env._arm_motion_scale = arm_motion_scale
+        env._arm_frequency_range = arm_frequency_range
+        env._arm_amplitude_range = arm_amplitude_range
+
         # Update reward parameters for new stage
         _update_reward_parameters(env, target_stage)
-        
+
         # Print stage transition message
         print(f"\n{'='*80}")
         print(f"[Curriculum] Stage Transition at Iteration {total_iterations}")
@@ -575,6 +629,9 @@ def command_curriculum_height_pose(
         print(f"  Roll Range:   [{roll_range[0]:.3f}, {roll_range[1]:.3f}] rad = [{math.degrees(roll_range[0]):.1f}, {math.degrees(roll_range[1]):.1f}]°")
         print(f"  Pitch Range:  [{pitch_range[0]:.3f}, {pitch_range[1]:.3f}] rad = [{math.degrees(pitch_range[0]):.1f}, {math.degrees(pitch_range[1]):.1f}]°")
         print(f"  Yaw Range:    [{yaw_range[0]:.3f}, {yaw_range[1]:.3f}] rad = [{math.degrees(yaw_range[0]):.1f}, {math.degrees(yaw_range[1]):.1f}]°")
+        print(f"  Arm Motion Scale: {arm_motion_scale:.2f}")
+        print(f"  Arm Frequency Range: [{arm_frequency_range[0]:.1f}, {arm_frequency_range[1]:.1f}] Hz")
+        print(f"  Arm Amplitude Range: [{arm_amplitude_range[0]:.1f}, {arm_amplitude_range[1]:.1f}] rad")
         _print_reward_parameters(env)
         print(f"{'='*80}\n")
     
