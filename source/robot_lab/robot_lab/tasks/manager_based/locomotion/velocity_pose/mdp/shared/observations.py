@@ -413,6 +413,93 @@ def combined_center_of_mass_offset(
     return com_offset
 
 
+# ==============================================================================
+# Placeholder observations for unified observation space
+# These are used to align Low-Level and High-Level observation dimensions
+# without affecting actual computation logic
+# ==============================================================================
+
+def placeholder_world_position(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for world position (Low-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 3, device=asset.device)
+
+
+def placeholder_world_yaw(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for world yaw angle (Low-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 1, device=asset.device)
+
+
+def placeholder_ee_target_world(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for EE target in world frame (Low-Level, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 3, device=asset.device)
+
+
+def placeholder_ee_position_error(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for EE position error (Low-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 3, device=asset.device)
+
+
+def placeholder_trajectory_progress(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for trajectory progress (Low-Level, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 1, device=asset.device)
+
+
+def placeholder_current_pose_commands(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for pose commands (Low-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 3, device=asset.device)
+
+
+def placeholder_velocity_pose_commands(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for VelocityPose commands (High-Level, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 7, device=asset.device)
+
+
+def placeholder_last_actions(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for last actions (High-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 12, device=asset.device)
+
+
+def placeholder_arm_details(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Placeholder for arm details (High-Level only, zeros)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.zeros(env.num_envs, 18, device=asset.device)
+
+
 # Re-export common observations from velocity task
 __all__ = [
     # New observations for VelocityPose
@@ -431,6 +518,16 @@ __all__ = [
     "arm_joint_vel_rel",
     "arm_end_effector_position_relative",
     "combined_center_of_mass_offset",
+    # Placeholder observations
+    "placeholder_world_position",
+    "placeholder_world_yaw",
+    "placeholder_ee_target_world",
+    "placeholder_ee_position_error",
+    "placeholder_trajectory_progress",
+    "placeholder_current_pose_commands",
+    "placeholder_velocity_pose_commands",
+    "placeholder_last_actions",
+    "placeholder_arm_details",
     # Re-exported from velocity task
     "joint_pos_rel_without_wheel",
     "phase",

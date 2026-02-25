@@ -28,3 +28,17 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:UnitreeGo2X5VelocityPoseRoughPPORunnerCfg",
     },
 )
+
+##
+# Register IK-based environment (Stage 2 Training)
+##
+
+gym.register(
+    id="RobotLab-Isaac-VelocityPose-IK-Unitree-Go2-X5-v0",
+    entry_point="robot_lab.tasks.manager_based.locomotion.velocity_pose:VelocityPoseEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.ik_rough_env_cfg:UnitreeGo2X5VelocityPoseIKRoughEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:UnitreeGo2X5VelocityPoseRoughPPORunnerCfg",
+    },
+)

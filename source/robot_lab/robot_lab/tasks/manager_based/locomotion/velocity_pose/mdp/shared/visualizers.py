@@ -353,3 +353,6 @@ class VelocityPoseCommandVisualizer:
         Markers handle reset automatically, no additional action needed.
         """
         pass
+
+
+__all__ = ["VelocityPoseCommandVisualizer"]

@@ -27,7 +27,9 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from robot_lab.tasks.manager_based.locomotion.velocity_pose.velocity_pose_env_cfg import (
     LocomotionVelocityPoseRoughEnvCfg,
 )
-from robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp.composite_actions import DogArmCompositeAction
+from robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp.low_level.composite_actions import (
+    DogArmCompositeAction,
+)
 import robot_lab.tasks.manager_based.locomotion.velocity_pose.mdp as mdp
 
 ##
@@ -47,149 +49,161 @@ ARM_JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
 
 
 @configclass
+class GO2X5ObservationsCfg:
+    """Unified observation space: 84D (Low-Level & High-Level)."""
+    
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Policy observations (84D unified)."""
+        
+        base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel,
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+            scale=2.0
+        )
+        
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel,
+            noise=Unoise(n_min=-0.2, n_max=0.2),
+            scale=0.25
+        )
+        
+        projected_gravity = ObsTerm(
+            func=mdp.projected_gravity,
+            noise=Unoise(n_min=-0.05, n_max=0.05)
+        )
+        
+        velocity_commands = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "base_velocity_pose"}
+        )
+        
+        actions = ObsTerm(func=mdp.last_action)
+        
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+            params={"asset_cfg": SceneEntityCfg(
+                "robot", joint_names=DOG_JOINT_NAMES)},
+            scale=1.0
+        )
+        
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            noise=Unoise(n_min=-1.5, n_max=1.5),
+            params={"asset_cfg": SceneEntityCfg(
+                "robot", joint_names=DOG_JOINT_NAMES)},
+            scale=0.05
+        )
+        
+        arm_joint_pos = ObsTerm(
+            func=mdp.arm_joint_pos_rel,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+            params={"asset_cfg": SceneEntityCfg(
+                "robot", joint_names=ARM_JOINT_NAMES)}
+        )
+        
+        arm_joint_vel = ObsTerm(
+            func=mdp.arm_joint_vel_rel,
+            noise=Unoise(n_min=-0.5, n_max=0.5),
+            params={"asset_cfg": SceneEntityCfg(
+                "robot", joint_names=ARM_JOINT_NAMES)}
+        )
+        
+        arm_ee_pos_relative = ObsTerm(
+            func=mdp.arm_end_effector_position_relative,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "ee_body_name": "link6"
+            }
+        )
+        
+        combined_com_offset = ObsTerm(
+            func=mdp.combined_center_of_mass_offset,
+            params={
+                "dog_cfg": SceneEntityCfg("robot"),
+                "dog_mass": 15.0,
+                "arm_mass": 3.0,
+                "arm_body_names": [
+                    "link1", "link2", "link3",
+                    "link4", "link5", "link6"
+                ]
+            }
+        )
+        
+        placeholder_world_pos = ObsTerm(
+            func=mdp.placeholder_world_position,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        placeholder_world_yaw = ObsTerm(
+            func=mdp.placeholder_world_yaw,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        placeholder_ee_target = ObsTerm(
+            func=mdp.placeholder_ee_target_world,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        placeholder_ee_error = ObsTerm(
+            func=mdp.placeholder_ee_position_error,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        placeholder_traj_progress = ObsTerm(
+            func=mdp.placeholder_trajectory_progress,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        placeholder_pose_cmds = ObsTerm(
+            func=mdp.placeholder_current_pose_commands,
+            params={"asset_cfg": SceneEntityCfg("robot")}
+        )
+        
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+    
+    policy: PolicyCfg = PolicyCfg()
+
+
+@configclass
 class UnitreeGo2X5VelocityPoseRoughEnvCfg(LocomotionVelocityPoseRoughEnvCfg):
     """Configuration for Unitree GO2 + ARX5 velocity and pose tracking (Stage 1)."""
     
     base_link_name = "base"
     foot_link_name = ".*_foot"
     
-    # Dog joint names (12 DOF)
     dog_joint_names = DOG_JOINT_NAMES
-    
-    # Arm joint names (6 DOF)
     arm_joint_names = ARM_JOINT_NAMES
-    
-    # All joint names (18 DOF total)
     all_joint_names = DOG_JOINT_NAMES + ARM_JOINT_NAMES
 
     def __post_init__(self):
-        # post init of parent
         super().__post_init__()
+        
+        # Replace policy with 84D unified observation space
+        self.observations.policy = GO2X5ObservationsCfg.PolicyCfg()
+        
+        # Disable height_scan in critic (not used in our config)
+        if hasattr(self.observations.critic, 'height_scan'):
+            self.observations.critic.height_scan = None
 
-        # ========================================
-        # Scene Configuration
-        # ========================================
+        # Scene
         self.scene.robot = GO2_X5_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/" + self.base_link_name
         self.scene.height_scanner_base.prim_path = "{ENV_REGEX_NS}/Robot/" + self.base_link_name
 
-        # ========================================
-        # Commands Configuration - ALIGNED WITH GO2
-        # ========================================
-        # Set default height for Go2 (approximately 0.33m)
+        # Commands
         self.commands.base_velocity_pose.default_height = 0.33
-        
-        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)  
-        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)   
+        self.commands.base_velocity_pose.ranges.height = (0.23, 0.43)
+        self.commands.base_velocity_pose.ranges.roll = (-0.785, 0.785)
         self.commands.base_velocity_pose.ranges.pitch = (-0.436, 0.436)
-        
-        # Velocity ranges
         self.commands.base_velocity_pose.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity_pose.ranges.lin_vel_y = (-0.6, 0.6)
         self.commands.base_velocity_pose.ranges.ang_vel_z = (-1.0, 1.0)
 
-        # ========================================
-        # Observations Configuration (76D total)
-        # ========================================
-        @configclass
-        class GO2X5ObservationsCfg:
-            """Unified 76D observation space for Stage 1."""
-            
-            @configclass
-            class PolicyCfg(ObsGroup):
-                """Policy observations (76D)."""
-                
-                # Dog base state (6D)
-                base_lin_vel = ObsTerm(
-                    func=mdp.base_lin_vel,
-                    noise=Unoise(n_min=-0.1, n_max=0.1),
-                    scale=2.0
-                )  # 3D
-                
-                base_ang_vel = ObsTerm(
-                    func=mdp.base_ang_vel,
-                    noise=Unoise(n_min=-0.2, n_max=0.2),
-                    scale=0.25
-                )  # 3D
-                
-                # Gravity projection (3D)
-                projected_gravity = ObsTerm(
-                    func=mdp.projected_gravity,
-                    noise=Unoise(n_min=-0.05, n_max=0.05)
-                )  # 3D
-                
-                # Commands (7D)
-                velocity_commands = ObsTerm(
-                    func=mdp.generated_commands,
-                    params={"command_name": "base_velocity_pose"}
-                )  # 7D: vx, vy, ωz, h, r, p, yaw=0
-                
-                # Dog joint states (24D)
-                joint_pos = ObsTerm(
-                    func=mdp.joint_pos_rel,
-                    noise=Unoise(n_min=-0.01, n_max=0.01),
-                    params={"asset_cfg": SceneEntityCfg("robot", joint_names=DOG_JOINT_NAMES)},
-                    scale=1.0
-                )  # 12D
-                
-                joint_vel = ObsTerm(
-                    func=mdp.joint_vel_rel,
-                    noise=Unoise(n_min=-1.5, n_max=1.5),
-                    params={"asset_cfg": SceneEntityCfg("robot", joint_names=DOG_JOINT_NAMES)},
-                    scale=0.05
-                )  # 12D
-                
-                # Last actions (12D: policy controls dog joints only)
-                actions = ObsTerm(func=mdp.last_action)  # 12D
-                
-                # ========== ARM OBSERVATIONS (NEW) ==========
-                
-                # Arm joint states (12D)
-                arm_joint_pos = ObsTerm(
-                    func=mdp.arm_joint_pos_rel,
-                    noise=Unoise(n_min=-0.01, n_max=0.01),
-                    params={"asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_NAMES)}
-                )  # 6D
-                
-                arm_joint_vel = ObsTerm(
-                    func=mdp.arm_joint_vel_rel,
-                    noise=Unoise(n_min=-0.5, n_max=0.5),
-                    params={"asset_cfg": SceneEntityCfg("robot", joint_names=ARM_JOINT_NAMES)}
-                )  # 6D
-                
-                # Arm end effector position relative to base (3D)
-                arm_ee_pos_relative = ObsTerm(
-                    func=mdp.arm_end_effector_position_relative,
-                    params={
-                        "asset_cfg": SceneEntityCfg("robot"),
-                        "ee_body_name": "link6"
-                    }
-                )  # 3D
-                
-                # Combined center of mass offset (3D)
-                combined_com_offset = ObsTerm(
-                    func=mdp.combined_center_of_mass_offset,
-                    params={
-                        "dog_cfg": SceneEntityCfg("robot"),
-                        "dog_mass": 15.0,
-                        "arm_mass": 3.0,
-                        "arm_body_names": ["link1", "link2", "link3", "link4", "link5", "link6"]
-                    }
-                )  # 3D
-                
-                def __post_init__(self):
-                    self.enable_corruption = True
-                    self.concatenate_terms = True
-            
-            # Policy and critic use same observations
-            policy: PolicyCfg = PolicyCfg()
-        
-        # Total observation dimension: 3+3+3+7+12+12+12+6+6+3+3 = 70D
-        # Note: 12D actions = policy controls dog joints only, arm controlled by trajectory
-        self.observations = GO2X5ObservationsCfg()
-
-        # ========================================
-        # Actions Configuration
+        # Actions
         # ========================================
         # Use composite action term that combines:
         # - Policy outputs: 12D (dog joints only)

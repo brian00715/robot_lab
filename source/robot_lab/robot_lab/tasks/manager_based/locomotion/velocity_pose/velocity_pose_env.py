@@ -16,6 +16,8 @@ from typing import Any
 from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedRLEnvCfg
 from isaaclab.managers import SceneEntityCfg
 
+from .mdp.shared.visualizers import VelocityPoseCommandVisualizer
+
 
 class VelocityPoseEnv(ManagerBasedRLEnv):
     """Environment for quadruped locomotion with velocity and pose tracking.
@@ -39,6 +41,65 @@ class VelocityPoseEnv(ManagerBasedRLEnv):
         """
         super().__init__(cfg, render_mode, **kwargs)
         
-        # print("[VelocityPoseEnv] Initialized successfully")  # (DISABLED for performance)
-        # print("[VelocityPoseEnv] NOTE: Arm motion is handled by DogArmCompositeAction in ActionManager")  # (DISABLED for performance)
+        # Initialize pose visualizer (will be set up after first reset)
+        self._pose_visualizer = None
+        self._visualizer_initialized = False
+        
+    def reset(self, seed: int | None = None, options: dict | None = None):
+        """Reset environment and initialize visualizer on first reset.
+        
+        Args:
+            seed: Random seed
+            options: Reset options
+            
+        Returns:
+            Observations and info dict
+        """
+        # Call parent reset
+        obs, info = super().reset(seed=seed, options=options)
+        
+        # Initialize visualizer on first reset (when sim is ready)
+        if not self._visualizer_initialized:
+            try:
+                # Check if debug_vis is enabled in velocity_pose command
+                if hasattr(self.command_manager, '_terms'):
+                    for term_name, term in self.command_manager._terms.items():
+                        if 'velocity_pose' in term_name.lower():
+                            if hasattr(term, 'cfg') and hasattr(term.cfg, 'debug_vis'):
+                                if term.cfg.debug_vis:
+                                    self._pose_visualizer = VelocityPoseCommandVisualizer(
+                                        self, self.num_envs
+                                    )
+                                    print("[VelocityPoseEnv] Pose visualizer initialized successfully")
+                                else:
+                                    print("[VelocityPoseEnv] debug_vis=False, visualizer disabled")
+                                break
+            except Exception as e:
+                print(f"[WARNING] Failed to initialize VelocityPose visualizer: {e}")
+                import traceback
+                traceback.print_exc()
+            
+            self._visualizer_initialized = True
+        
+        return obs, info
+        
+    def step(self, action: torch.Tensor) -> tuple[Any, Any, Any, Any, Any]:
+        """Execute environment step with visualization update.
+        
+        Args:
+            action: Actions from policy
+            
+        Returns:
+            Tuple of (obs, rew, terminated, truncated, info)
+        """
+        # Execute normal step
+        result = super().step(action)
+        
+        # Update visualization if enabled
+        if self._pose_visualizer is not None:
+            command = self.command_manager.get_command("base_velocity_pose")
+            robot = self.scene["robot"]
+            self._pose_visualizer.update(command, robot)
+        
+        return result
 
