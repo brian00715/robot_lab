@@ -54,21 +54,25 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
-import gymnasium as gym
-import torch
 from datetime import datetime
 
 import cusrl
-import robot_lab.tasks  # noqa: F401
+import gymnasium as gym
+import torch
 from cusrl.environment.isaaclab import TrainerCfg
 
-from isaaclab.envs import DirectMARLEnvCfg  # noqa: F401
-from isaaclab.envs import DirectRLEnvCfg  # noqa: F401
-from isaaclab.envs import ManagerBasedRLEnvCfg  # noqa: F401
-from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.envs import (
+    DirectMARLEnv,
+    DirectMARLEnvCfg,  # noqa: F401
+    DirectRLEnvCfg,  # noqa: F401
+    ManagerBasedRLEnvCfg,  # noqa: F401
+    multi_agent_to_single_agent,
+)
 from isaaclab.utils.dict import print_dict
 
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
+
+import robot_lab.tasks  # noqa: F401  # isort: skip
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -125,7 +129,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         agent_factory=agent_cfg.agent_factory.override(
             device=args_cli.device, autocast=args_cli.autocast, compile=args_cli.compile
         ),
-        logger_factory=cusrl.make_logger_factory(args_cli.logger, log_dir, add_datetime_prefix=False),
+        logger_factory=cusrl.make_logger_factory(args_cli.logger, log_dir, name=None),
         num_iterations=agent_cfg.max_iterations,
         save_interval=agent_cfg.save_interval,
         checkpoint_path=args_cli.checkpoint,

@@ -11,10 +11,6 @@ import sys
 
 from isaaclab.app import AppLauncher
 
-# local imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from rl_utils import camera_follow
-
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Evaluate an RL agent with CusRL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
@@ -54,22 +50,29 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+import cusrl
 import gymnasium as gym
 import torch
-
-import cusrl
-import robot_lab.tasks  # noqa: F401
 from cusrl.environment.isaaclab import TrainerCfg
 
 from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
-from isaaclab.envs import DirectMARLEnvCfg  # noqa: F401
-from isaaclab.envs import DirectRLEnvCfg  # noqa: F401
-from isaaclab.envs import ManagerBasedRLEnvCfg  # noqa: F401
-from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.envs import (
+    DirectMARLEnv,
+    DirectMARLEnvCfg,  # noqa: F401
+    DirectRLEnvCfg,  # noqa: F401
+    ManagerBasedRLEnvCfg,  # noqa: F401
+    multi_agent_to_single_agent,
+)
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.dict import print_dict
 
 from isaaclab_tasks.utils.hydra import hydra_task_config  # noqa: F401
+
+import robot_lab.tasks  # noqa: F401  # isort: skip
+
+# local imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from rl_utils import camera_follow
 
 
 class CameraFollowPlayerHook(cusrl.Player.Hook):

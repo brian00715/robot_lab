@@ -6,8 +6,9 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-import numpy as np
 import os
+
+import numpy as np
 import torch
 
 
@@ -192,9 +193,9 @@ class MotionLoader:
             Time samples, between 0 and the specified/motion duration.
         """
         duration = self.duration if duration is None else duration
-        assert (
-            duration <= self.duration
-        ), f"The specified duration ({duration}) is longer than the motion duration ({self.duration})"
+        assert duration <= self.duration, (
+            f"The specified duration ({duration}) is longer than the motion duration ({self.duration})"
+        )
         return duration * np.random.uniform(low=0.0, high=1.0, size=num_samples)
 
     def sample(
@@ -211,9 +212,12 @@ class MotionLoader:
                 If ``times`` is defined, this parameter is ignored.
 
         Returns:
-            Sampled motion DOF positions (with shape (N, num_dofs)), DOF velocities (with shape (N, num_dofs)),
-            body positions (with shape (N, num_bodies, 3)), body rotations (with shape (N, num_bodies, 4), as wxyz quaternion),
-            body linear velocities (with shape (N, num_bodies, 3)) and body angular velocities (with shape (N, num_bodies, 3)).
+            Sampled motion DOF positions (with shape (N, num_dofs)),
+            DOF velocities (with shape (N, num_dofs)),
+            body positions (with shape (N, num_bodies, 3)),
+            body rotations (with shape (N, num_bodies, 4), as wxyz quaternion),
+            body linear velocities (with shape (N, num_bodies, 3))
+            and body angular velocities (with shape (N, num_bodies, 3)).
         """
         times = self.sample_times(num_samples, duration) if times is None else times
         index_0, index_1, blend = self._compute_frame_blend(times)
