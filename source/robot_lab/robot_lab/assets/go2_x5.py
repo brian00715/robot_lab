@@ -62,7 +62,8 @@ GO2_X5_CFG = ArticulationCfg(
             max_delay=5,
         ),
         "gripper": DelayedPDActuatorCfg(
-            joint_names_expr=["gripper_joint"],
+            # gripper_joint and joint8 are the two fingers of the parallel gripper
+            joint_names_expr=["gripper_joint", "joint8"],
             effort_limit=12.0,
             velocity_limit=5.0,
             stiffness=25,
