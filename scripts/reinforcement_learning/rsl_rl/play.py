@@ -85,6 +85,30 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import robot_lab.tasks  # noqa: F401
 
 
+def _export_vwbc_policy(policy_nn, export_dir: str) -> None:
+    """Export a VWBCActorCritic to JIT and ONNX via its build_deploy_actor() factory."""
+    os.makedirs(export_dir, exist_ok=True)
+    deploy = policy_nn.build_deploy_actor().cpu().eval()
+
+    # JIT
+    scripted = torch.jit.script(deploy)
+    scripted.save(os.path.join(export_dir, "policy.pt"))
+
+    # ONNX — full obs dim: num_prop + num_priv + num_hist * num_prop
+    obs_dim = policy_nn.num_prop + policy_nn.num_priv + policy_nn.num_hist * policy_nn.num_prop
+    dummy_obs = torch.zeros(1, obs_dim)
+    torch.onnx.export(
+        deploy,
+        dummy_obs,
+        os.path.join(export_dir, "policy.onnx"),
+        export_params=True,
+        opset_version=18,
+        input_names=["obs"],
+        output_names=["actions"],
+        dynamic_axes={},
+    )
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
@@ -202,8 +226,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    if hasattr(policy_nn, "build_deploy_actor"):
+        _export_vwbc_policy(policy_nn, export_model_dir)
+    else:
+        export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
+        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
 

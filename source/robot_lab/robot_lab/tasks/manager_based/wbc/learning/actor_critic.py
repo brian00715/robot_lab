@@ -85,6 +85,39 @@ class StateHistoryEncoder(nn.Module):
         return self.linear_output(out)
 
 
+class VWBCDeployActor(nn.Module):
+    """Standalone deployment actor (history-encoder path) for JIT / ONNX export.
+
+    Takes the full flat obs tensor ``(B, num_prop + num_priv + num_hist*num_prop)``
+    and returns leg actions ``(B, num_actions)``.  Privileged info is discarded —
+    only proprio and history are used, matching the deployed policy's inference path.
+
+    Build via :meth:`VWBCActorCritic.build_deploy_actor` rather than constructing
+    directly; that method deep-copies the sub-modules so this object is independent.
+    """
+
+    def __init__(
+        self,
+        num_prop: int,
+        num_hist: int,
+        history_encoder: nn.Module,
+        actor_backbone: nn.Module,
+        leg_head: nn.Module,
+    ):
+        super().__init__()
+        self.num_prop = num_prop
+        self.num_hist = num_hist
+        self.history_encoder = history_encoder
+        self.actor_backbone = actor_backbone
+        self.leg_head = leg_head
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        prop = x[:, : self.num_prop]
+        hist = x[:, -(self.num_hist * self.num_prop) :].view(-1, self.num_hist, self.num_prop)
+        latent = self.history_encoder(hist)
+        return self.leg_head(self.actor_backbone(torch.cat([prop, latent], dim=-1)))
+
+
 class _Backbone(nn.Module):
     """Sequential MLP that returns either the requested hidden activations or identity."""
 
@@ -321,3 +354,18 @@ class VWBCActorCritic(nn.Module):
     def load_state_dict(self, state_dict, strict: bool = True):
         super().load_state_dict(state_dict, strict=strict)
         return True
+
+    def build_deploy_actor(self) -> VWBCDeployActor:
+        """Return a standalone :class:`VWBCDeployActor` ready for JIT/ONNX export.
+
+        Deep-copies the three sub-modules so the returned object is fully
+        independent of this actor-critic (safe to script, save, move to CPU).
+        """
+        import copy
+        return VWBCDeployActor(
+            num_prop=self.num_prop,
+            num_hist=self.num_hist,
+            history_encoder=copy.deepcopy(self.history_encoder),
+            actor_backbone=copy.deepcopy(self.actor_backbone),
+            leg_head=copy.deepcopy(self.leg_head),
+        )
