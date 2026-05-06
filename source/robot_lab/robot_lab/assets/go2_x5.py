@@ -70,12 +70,4 @@ GO2_X5_CFG = ArticulationCfg(
             damping=0.5,
         ),
     },
-    # joint_sdk_names=[
-    #     "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
-    #     "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
-    #     "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
-    #     "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
-    #     "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-    #     "gripper_joint", "joint8",
-    # ],
 )

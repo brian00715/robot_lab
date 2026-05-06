@@ -1,340 +1,277 @@
 # Copyright (c) 2024-2025 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
-"""Composite action term for combining policy actions with trajectory generation."""
+"""Composite action term ported from visual_wholebody.
+
+The action space matches ``manip_loco`` precisely:
+
+* ``action_dim = 12`` (dog joints only). The arm is **not** policy-controlled.
+* The arm follows the **environment-driven** EE goal (see
+  :class:`EEGoalSphereCommand`) via damped least-squares Jacobian IK
+  (``lambda^2 = 0.05^2``, no per-step delta clamp).
+* Per-joint dog action scale ``[0.4, 0.45, 0.45]`` (hip / thigh / calf), exactly
+  as in ``b1z1_config.control.action_scale``.
+* A ``action_delay = 3`` frame action history buffer is maintained. Before
+  ``delay_curriculum_switch_steps`` global env steps the policy reads the
+  ``-1``-th history slot (1-step delay); afterwards it switches to ``-2``
+  (2-step delay) — exact replica of ``manip_loco.step``.
+
+Per the user's "ignore physical-asset differences" directive we reuse Isaac
+Lab's actuator model (Kp/Kd from the asset config) instead of re-implementing
+``b1z1_config.control.stiffness/damping``. The motor-strength multiplicative
+randomization from VWBC is approximated by scaling the *action targets*
+themselves (action × motor_strength), which yields the same effective torque
+under PD control.
+"""
 
 from __future__ import annotations
 
-import torch
+import re
 from typing import TYPE_CHECKING
 
-from isaaclab.assets.articulation import Articulation
+import torch
+
 from isaaclab.managers import ActionTerm, ActionTermCfg
+from isaaclab.utils import configclass
+from isaaclab.utils import math as math_utils
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
-from .arm_controller import create_arm_controller
 
+class VisualWholeBodyAction(ActionTerm):
+    """12-D dog action + env-driven arm IK targets.
 
-class DogArmCompositeAction(ActionTerm):
-    """Composite action term that combines policy actions for dog with trajectory actions for arm.
-    
-    This action term handles the composite control of GO2+ARM robots:
-    - Policy outputs 12D actions for dog locomotion
-    - Arm controller generates 6D trajectory actions
-    - Combined 18D actions are applied to all joints
-    
-    This follows the standard ActionTerm interface and works with Isaac Lab's ActionManager.
+    On every ``process_actions`` call:
+      1. The raw 12-D action enters a circular history buffer of length
+         ``action_delay + 2``.
+      2. A curriculum-gated delayed action is read out (``-1`` then ``-2``).
+      3. ``dog_target = default_pos + scale * delayed_action * motor_strength``.
+      4. ``arm_target = dof_pos + IK(dpos, drot)`` using the EE goal published
+         by the ``EEGoalSphereCommand`` term.
     """
-    
-    cfg: ActionTermCfg
-    
-    def __init__(self, cfg: ActionTermCfg, env):
-        """Initialize the composite action term.
-        
-        Args:
-            cfg: Configuration for the action term.
-            env: The environment instance.
-        """
-        super().__init__(cfg, env)
-        
-        # Get the articulation asset
-        self._asset = env.scene[cfg.asset_name]
-        
-        # Detect if this is a dog+arm configuration
-        self._has_arm = self._detect_arm_configuration()
-        
-        # Initialize arm controller if arm is detected
-        self._arm_controller = None
-        self._env = env  # Store env reference for stage checking
-        if self._has_arm:
-            try:
-                # Check if inference stage is set (from play.py --curriculum_stage)
-                initial_stage = 1  # Default to stage 1
-                
-                # Try multiple sources for inference stage (in order of priority)
-                if hasattr(env.cfg, 'inference_stage') and env.cfg.inference_stage is not None:
-                    # From env_cfg (set by play.py BEFORE environment creation)
-                    initial_stage = env.cfg.inference_stage
-                    print(f"[DogArmCompositeAction] Detected inference stage from env_cfg: {initial_stage}")
-                elif hasattr(env.unwrapped, '_inference_curriculum_stage'):
-                    # From unwrapped env (set by play.py AFTER wrapper)
-                    initial_stage = env.unwrapped._inference_curriculum_stage
-                    print(f"[DogArmCompositeAction] Detected inference stage from unwrapped: {initial_stage}")
-                
-                # Check for fixed arm mode index (from play.py --arm_actions_idx)
-                fixed_mode_idx = None
-                if hasattr(env.cfg, 'fixed_arm_mode_idx') and env.cfg.fixed_arm_mode_idx is not None:
-                    # From env_cfg (set by play.py BEFORE environment creation)
-                    fixed_mode_idx = env.cfg.fixed_arm_mode_idx
-                    mode_names = ["circular", "figure_eight", "sinusoidal", "random_walk", "reach_points",
-                                  "fishing", "grasping", "swinging", "probing"]
-                    print(f"[DogArmCompositeAction] Fixed arm mode: {mode_names[fixed_mode_idx]} (index {fixed_mode_idx})")
-                elif hasattr(env.unwrapped, '_fixed_arm_mode_idx'):
-                    # Fallback: from unwrapped env (for backward compatibility)
-                    fixed_mode_idx = env.unwrapped._fixed_arm_mode_idx
-                    mode_names = ["circular", "figure_eight", "sinusoidal", "random_walk", "reach_points",
-                                  "fishing", "grasping", "swinging", "probing"]
-                    print(f"[DogArmCompositeAction] Fixed arm mode: {mode_names[fixed_mode_idx]} (index {fixed_mode_idx})")
-                
-                self._arm_controller = create_arm_controller(
-                    num_envs=env.num_envs,
-                    device=env.device,
-                    stage=initial_stage,  # Use detected or default stage
-                    fixed_mode_idx=fixed_mode_idx  # Pass fixed mode if specified
-                )
-                print(f"[DogArmCompositeAction] Initialized arm controller for {env.num_envs} envs at stage {initial_stage}")
-            except Exception as e:
-                print(f"[DogArmCompositeAction] ERROR: Failed to initialize arm controller: {e}")
-                self._has_arm = False
-        
-        # Store joint indices
-        if self._has_arm:
-            # CRITICAL FIX: Map DOG_JOINT_NAMES order to URDF order
-            # DOG_JOINT_NAMES (policy output order): FR, FL, RR, RL
-            # URDF order: FL, FR, RL, RR
-            # We need to reorder policy actions to match URDF
-            
-            # Get all joint names from asset
-            all_joint_names = self._asset.joint_names
-            # print(f"[DogArmCompositeAction] All URDF joints: {all_joint_names}")
-            
-            # Define expected policy output order (from DOG_JOINT_NAMES in rough_env_cfg.py)
-            policy_joint_order = [
-                "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
-                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
-                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
-                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
-            ]
-            
-            # Filter to get only dog joint names (exclude arm joints)
-            dog_joint_names_urdf = [name for name in all_joint_names 
-                                    if any(leg in name for leg in ['FL_', 'FR_', 'RL_', 'RR_'])]
-            # print(f"[DogArmCompositeAction] Dog joints in URDF: {dog_joint_names_urdf}")
-            
-            # Create mapping: policy_index -> urdf_dog_index
-            # We need to map policy order to the actual indices in all_joint_names
-            self._policy_to_urdf_mapping = []
-            self._dog_joint_ids = []  # Store actual indices in all_joint_names
-            
-            for policy_joint_name in policy_joint_order:
-                try:
-                    # Find the actual index in all_joint_names
-                    urdf_global_index = all_joint_names.index(policy_joint_name)
-                    self._dog_joint_ids.append(urdf_global_index)
-                    # Find position within dog_joint_names_urdf for reordering
-                    urdf_dog_index = dog_joint_names_urdf.index(policy_joint_name)
-                    self._policy_to_urdf_mapping.append(urdf_dog_index)
-                except ValueError:
-                    raise ValueError(f"Joint {policy_joint_name} not found in URDF!")
-            
-            # print(f"\n{'='*80}")
-            # print("[DogArmCompositeAction] JOINT MAPPING INITIALIZATION")
-            # print(f"{'='*80}")
-            # print(f"Policy-to-URDF mapping: {self._policy_to_urdf_mapping}")
-            # print("\nDetailed Mapping:")
-            # policy_names = ["FR_hip", "FR_thigh", "FR_calf", "FL_hip", "FL_thigh", "FL_calf",
-            #                 "RR_hip", "RR_thigh", "RR_calf", "RL_hip", "RL_thigh", "RL_calf"]
-            # for policy_idx, (urdf_idx, name) in enumerate(zip(self._policy_to_urdf_mapping, policy_names)):
-            #     urdf_name = dog_joint_names_urdf[urdf_idx]
-            #     print(f"  Policy[{policy_idx:2d}] {name:12s} -> URDF[{urdf_idx:2d}] {urdf_name}")
-            
-            # Verify critical mappings
-            # print("\nCritical Verification:")
-            # print(f"  Policy FR_hip (idx 0) -> Dog[{self._policy_to_urdf_mapping[0]}] Global[{self._dog_joint_ids[0]}]")
-            # print(f"  Policy FL_hip (idx 3) -> Dog[{self._policy_to_urdf_mapping[3]}] Global[{self._dog_joint_ids[3]}]")
-            # print(f"  Policy RR_hip (idx 6) -> Dog[{self._policy_to_urdf_mapping[6]}] Global[{self._dog_joint_ids[6]}]")
-            # print(f"  Policy RL_hip (idx 9) -> Dog[{self._policy_to_urdf_mapping[9]}] Global[{self._dog_joint_ids[9]}]")
-            # print(f"{'='*80}\n")
-            
-            # Arm joint IDs - use the configured manipulator joints only. Do not infer from
-            # "non-dog" joints, since gripper/mimic joints may also be present in the USD.
-            arm_joint_order = getattr(env.cfg, "arm_joint_names", ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"])
-            self._arm_joint_ids = []
-            for arm_joint_name in arm_joint_order:
-                try:
-                    self._arm_joint_ids.append(all_joint_names.index(arm_joint_name))
-                except ValueError:
-                    raise ValueError(f"Arm joint {arm_joint_name} not found in URDF!")
-            self._passive_joint_ids = [
-                i for i in range(len(all_joint_names)) if i not in self._dog_joint_ids and i not in self._arm_joint_ids
-            ]
-            print(
-                f"[DogArmCompositeAction] Joint mapping initialized: "
-                f"{len(self._dog_joint_ids)} dog joints, {len(self._arm_joint_ids)} arm joints, "
-                f"{len(self._passive_joint_ids)} passive joints"
-            )
-            
-            # CRITICAL: Process scale configuration for dog joints
-            # Isaac Lab's ActionTerm doesn't handle regex dict scale for composite actions
-            # We need to manually process it
-            dog_joint_names = [all_joint_names[i] for i in self._dog_joint_ids]
-            
-            if hasattr(cfg, 'scale') and isinstance(cfg.scale, dict):
-                # Process scale dict
-                scale_values = []
-                for joint_name in dog_joint_names:
-                    # Check each pattern in scale dict
-                    scale_val = 0.25  # default
-                    for pattern, val in cfg.scale.items():
-                        import re
-                        if re.match(pattern, joint_name):
-                            scale_val = val
-                            break
-                    scale_values.append(scale_val)
-                
-                self._dog_scale = torch.tensor(scale_values, device=env.device)
-                print(f"[DogArmCompositeAction] Processed dog joint scales: {scale_values}")
-            else:
-                # Use uniform scale
-                scale_val = getattr(cfg, 'scale', 0.25) if not isinstance(getattr(cfg, 'scale', 0.25), dict) else 0.25
-                self._dog_scale = torch.full((12,), scale_val, device=env.device)
-                print(f"[DogArmCompositeAction] Using uniform scale: {scale_val}")
-            
-            # CRITICAL FIX: Use default joint positions as offset (in policy order!)
-            # Extract default positions for dog joints in the policy output order
-            default_positions = self._asset.data.default_joint_pos[0, self._dog_joint_ids]
-            self._dog_offset = default_positions.clone()
-            print(f"[DogArmCompositeAction] Dog joint offsets (policy order): {self._dog_offset.cpu().numpy()}")
-        else:
-            # For dog-only mode, use parent class processing
-            # Parent ActionTerm will handle _scale and _offset
-            pass
-        
-        # Debug counter
-        self._step_counter = 0
-    
-    def _detect_arm_configuration(self):
-        """Detect if the robot has an arm based on configuration.
-        
-        Returns:
-            True if arm is detected, False otherwise.
-        """
-        # Check joint count - GO2 has 12 DOF, GO2+ARX5 has 18+ DOF (may include gripper joints)
-        num_joints = self._asset.num_joints
-        if num_joints >= 18:  # 18 or more joints means it has an arm
-            print(f"[DogArmCompositeAction] Detected {num_joints} DOF robot - GO2+ARM configuration")
-            return True
-        elif num_joints == 12:
-            print("[DogArmCompositeAction] Detected 12 DOF robot - Dog only configuration")
-            return False
-        else:
-            print(f"[DogArmCompositeAction] WARNING: Unexpected joint count: {num_joints}")
-            return False
-    
-    @property
-    def action_dim(self):
-        """Dimension of the action space.
-        
-        For composite control, the policy only outputs dog actions (12D).
-        The arm actions (6D) are generated internally.
-        """
-        if self._has_arm:
-            return 12  # Policy only controls dog
-        else:
-            return self._asset.num_joints  # Standard control
-    
-    @property
-    def raw_actions(self):
-        """The input/raw actions sent to the term."""
-        return self._raw_actions
-    
-    @property
-    def processed_actions(self):
-        """The actions computed by the term after applying any processing."""
-        return self._processed_actions
-    
-    def process_actions(self, actions):
-        """Process the actions and combine with arm trajectory.
-        
-        Args:
-            actions: Policy actions (num_envs, 12) for dog joints.
-        """
-        self._step_counter += 1
-        
-        # Store raw actions
-        self._raw_actions = actions.clone()
-        
-        if self._has_arm and self._arm_controller is not None:
-            # Debug: First step (DISABLED for performance)
-            # if self._step_counter == 1:
-            #     print(f"\n{'='*80}")
-            #     print("[DogArmCompositeAction] First step:")
-            #     print(f"  Policy actions shape: {actions.shape}")
-            #     print(f"  Policy actions[0]: {actions[0]}")
-            #     print(f"{'='*80}\n")
-            
-            # Policy outputs dog actions (12D)
-            dog_actions = actions
-            
-            # Generate arm trajectory actions (6D)
-            arm_actions = self._arm_controller.generate_arm_action(self._env)
-            
-            # Debug: Every 100 steps (DISABLED for performance)
-            # if self._step_counter % 100 == 0:
-            #     print(f"[DogArmCompositeAction] Step {self._step_counter}:")
-            #     print(f"  Arm actions mean: {arm_actions.mean(dim=0).cpu().numpy()}")
-            #     print(f"  Arm actions std: {arm_actions.std(dim=0).cpu().numpy()}")
-            
-            # Apply scale to dog actions only (arm uses full trajectory output)
-            # Use per-joint scale tensor (handles different scales for hip vs other joints)
-            scaled_dog_actions = self._dog_offset + self._dog_scale * dog_actions
-            
-            # CRITICAL FIX: Create full action vector with correct indices
-            # Dog joints may not be at indices 0-11 in URDF
-            # We need to place each policy action at its correct global index
-            
-            num_joints = self._asset.num_joints
-            full_actions = self._asset.data.default_joint_pos[:, :num_joints].clone()
-            
-            # Place dog actions at their correct global indices
-            # policy_idx corresponds to DOG_JOINT_NAMES order
-            # self._dog_joint_ids[policy_idx] is the global URDF index
-            for policy_idx in range(len(self._dog_joint_ids)):
-                global_idx = self._dog_joint_ids[policy_idx]
-                full_actions[:, global_idx] = scaled_dog_actions[:, policy_idx]
-            
-            # Place arm actions at their correct global indices
-            for arm_action_idx, global_idx in enumerate(self._arm_joint_ids):
-                if arm_action_idx < arm_actions.shape[1]:  # Within arm action dimensions
-                    full_actions[:, global_idx] = arm_actions[:, arm_action_idx]
-            
-            # Debug first 10 steps to verify mapping works correctly (VERIFIED - DISABLED)
-            # if self._step_counter <= 10:
-            #     env_idx = 0  # Monitor first environment
-            #     print(f"\n[Step {self._step_counter}] Action Mapping Verification (env {env_idx}):")
-            #     print(f"  Policy outputs (12D dog actions):")
-            #     print(f"    FR_hip={scaled_dog_actions[env_idx, 0]:.4f}, FR_thigh={scaled_dog_actions[env_idx, 1]:.4f}, FR_calf={scaled_dog_actions[env_idx, 2]:.4f}")
-            #     print(f"    FL_hip={scaled_dog_actions[env_idx, 3]:.4f}, FL_thigh={scaled_dog_actions[env_idx, 4]:.4f}, FL_calf={scaled_dog_actions[env_idx, 5]:.4f}")
-            #     print(f"    RR_hip={scaled_dog_actions[env_idx, 6]:.4f}, RR_thigh={scaled_dog_actions[env_idx, 7]:.4f}, RR_calf={scaled_dog_actions[env_idx, 8]:.4f}")
-            #     print(f"    RL_hip={scaled_dog_actions[env_idx, 9]:.4f}, RL_thigh={scaled_dog_actions[env_idx, 10]:.4f}, RL_calf={scaled_dog_actions[env_idx, 11]:.4f}")
-            #     
-            #     all_joint_names = self._asset.joint_names
-            #     print(f"  Mapped to global URDF indices:")
-            #     for policy_idx in range(min(12, len(self._dog_joint_ids))):
-            #         global_idx = self._dog_joint_ids[policy_idx]
-            #         joint_name = all_joint_names[global_idx]
-            #         value = full_actions[env_idx, global_idx]
-            #         print(f"    Policy[{policy_idx:2d}] -> Global[{global_idx:2d}] {joint_name:20s} = {value:.4f}")
 
-            self._processed_actions = full_actions
-            
+    cfg: VisualWholeBodyActionCfg
+
+    def __init__(self, cfg: VisualWholeBodyActionCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._env = env
+        self._asset = env.scene[cfg.asset_name]
+        self._joint_names = self._asset.joint_names
+        self._body_names = self._asset.body_names
+
+        self._dog_joint_ids = self._resolve_joint_ids(cfg.dog_joint_names)
+        self._arm_joint_ids = self._resolve_joint_ids(cfg.arm_joint_names)
+        if len(self._dog_joint_ids) != 12:
+            raise ValueError(f"VisualWholeBodyAction expects 12 dog joints, got {len(self._dog_joint_ids)}")
+        if len(self._arm_joint_ids) != 6:
+            raise ValueError(f"VisualWholeBodyAction expects 6 arm joints, got {len(self._arm_joint_ids)}")
+        self._ee_body_id = self._resolve_body_id(cfg.ee_body_name)
+
+        # per-joint dog action scale tensor (shape: [12])
+        self._dog_scale = self._make_dog_scale(cfg.scale)
+        self._dog_offset = self._asset.data.default_joint_pos[0, self._dog_joint_ids].clone()
+
+        # action delay buffer: shape (N, action_delay + 2, action_dim)
+        self._action_delay = int(cfg.action_delay)
+        self._delay_buf_len = self._action_delay + 2
+        self._action_history = torch.zeros(
+            env.num_envs, self._delay_buf_len, self.action_dim, device=env.device
+        )
+
+        # motor strength multiplier (set by event term `randomize_motor_strength`)
+        self._motor_strength = torch.ones(env.num_envs, len(self._dog_joint_ids), device=env.device)
+
+        # Cached EE goal command term reference (resolved lazily, after manager init)
+        self._ee_goal_command_name = cfg.ee_goal_command_name
+        self._ee_command = None
+        self._ik_damping = float(cfg.ik_damping)
+        self._clip_action = float(cfg.clip_actions)
+        self._delay_switch_steps = int(cfg.delay_curriculum_switch_steps)
+
+        self._raw_actions = torch.zeros(env.num_envs, self.action_dim, device=env.device)
+        self._processed_actions = self._asset.data.default_joint_pos.clone()
+        self._dog_target_buf = self._dog_offset.unsqueeze(0).repeat(env.num_envs, 1).clone()
+
+    @property
+    def action_dim(self) -> int:
+        return 12  # dog joints only — arm is env-driven
+
+    @property
+    def raw_actions(self) -> torch.Tensor:
+        return self._raw_actions
+
+    @property
+    def processed_actions(self) -> torch.Tensor:
+        return self._processed_actions
+
+    @property
+    def dog_joint_ids(self) -> list[int]:
+        return list(self._dog_joint_ids)
+
+    @property
+    def arm_joint_ids(self) -> list[int]:
+        return list(self._arm_joint_ids)
+
+    @property
+    def motor_strength(self) -> torch.Tensor:
+        return self._motor_strength
+
+    def set_motor_strength(self, motor_strength: torch.Tensor, env_ids: torch.Tensor | None = None):
+        """Set per-env motor strength multipliers (used by event term)."""
+        if env_ids is None:
+            self._motor_strength[:] = motor_strength
         else:
-            # Standard dog-only control
-            self._processed_actions = self._offset + self._scale * actions
-    
-    def apply_actions(self):
-        """Apply the processed actions to the articulation."""
-        # Set joint position targets
-        self._asset.set_joint_position_target(self._processed_actions)
-    
+            self._motor_strength[env_ids] = motor_strength
+
     def reset(self, env_ids=None):
-        """Reset the action term.
-        
-        Args:
-            env_ids: The environment indices to reset. If None, reset all environments.
-        """
-        # Reset arm controller state
-        if self._has_arm and self._arm_controller is not None and env_ids is not None:
-            self._arm_controller.reset_idx(env_ids)
+        if env_ids is None:
+            env_ids = torch.arange(self._env.num_envs, device=self._env.device)
+        elif isinstance(env_ids, slice):
+            env_ids = torch.arange(self._env.num_envs, device=self._env.device)[env_ids]
+        elif not isinstance(env_ids, torch.Tensor):
+            env_ids = torch.as_tensor(env_ids, device=self._env.device, dtype=torch.long)
+        self._action_history[env_ids] = 0.0
+        self._raw_actions[env_ids] = 0.0
+        self._processed_actions[env_ids] = self._asset.data.default_joint_pos[env_ids]
+
+    def process_actions(self, actions: torch.Tensor):
+        # Clip raw actions (matches `actions = torch.clip(actions, -clip, clip)`)
+        clipped = torch.clamp(actions, -self._clip_action, self._clip_action)
+        self._raw_actions[:] = clipped
+
+        # Push into history buffer (most recent is index -1)
+        self._action_history = torch.cat(
+            [self._action_history[:, 1:, :], clipped.unsqueeze(1)], dim=1
+        )
+
+        # Curriculum-gated read-out (matches manip_loco.step lines 77-80)
+        global_steps = int(getattr(self._env, "common_step_counter", 0))
+        delay_idx = -1 if global_steps < self._delay_switch_steps else -2
+        delayed = self._action_history[:, delay_idx, :]
+
+        # Per-joint dog target: scale * delayed * motor_strength + default_pos
+        dog_targets = self._dog_offset + self._dog_scale * delayed * self._motor_strength
+        self._dog_target_buf[:] = dog_targets
+
+        # Arm IK targets from env-driven EE goal
+        arm_targets = self._compute_arm_targets()
+
+        # Build full target vector
+        full_targets = self._asset.data.default_joint_pos.clone()
+        full_targets[:, self._dog_joint_ids] = dog_targets
+        full_targets[:, self._arm_joint_ids] = arm_targets
+        self._processed_actions = full_targets
+
+    def apply_actions(self):
+        self._asset.set_joint_position_target(self._processed_actions)
+
+    # ----- arm IK ---------------------------------------------------------
+
+    def _compute_arm_targets(self) -> torch.Tensor:
+        if self._ee_command is None:
+            self._ee_command = self._env.command_manager.get_term(self._ee_goal_command_name)
+
+        # Goal pose in world frame (published by the EE goal command term)
+        ee_goal_pos_w = self._ee_command.curr_ee_goal_cart_world
+        ee_goal_quat_w = self._ee_command.ee_goal_orn_quat
+
+        # Current EE pose in world frame
+        ee_pos_w = self._asset.data.body_pos_w[:, self._ee_body_id, :]
+        ee_quat_w = self._asset.data.body_quat_w[:, self._ee_body_id, :]
+        # Normalize current quat (parity with manip_loco._reward_tracking_ee_world neighbourhood)
+        ee_quat_w = ee_quat_w / (ee_quat_w.norm(dim=-1, keepdim=True) + 1e-8)
+
+        pos_error, rot_error = math_utils.compute_pose_error(
+            ee_pos_w, ee_quat_w, ee_goal_pos_w, ee_goal_quat_w, rot_error_type="axis_angle"
+        )
+        delta_pose = torch.cat((pos_error, rot_error), dim=-1).unsqueeze(-1)  # (N, 6, 1)
+
+        jacobian = self._get_arm_jacobian()  # (N, 6, 6)
+        jt = torch.transpose(jacobian, 1, 2)
+        damp = (self._ik_damping ** 2) * torch.eye(6, device=self._env.device)
+        A = jacobian @ jt + damp.unsqueeze(0)
+        delta_q = jt @ torch.linalg.solve(A, delta_pose)  # (N, 6, 1)
+        delta_q = delta_q.squeeze(-1)
+        # No per-step ±0.25 clamp — matches manip_loco._control_ik (no clamp).
+
+        arm_pos = self._asset.data.joint_pos[:, self._arm_joint_ids]
+        arm_targets = arm_pos + delta_q
+        # Clip to joint limits to avoid solver drift outside the asset limits
+        arm_limits = self._asset.data.soft_joint_pos_limits[:, self._arm_joint_ids]
+        return torch.max(torch.min(arm_targets, arm_limits[..., 1]), arm_limits[..., 0])
+
+    def _get_arm_jacobian(self) -> torch.Tensor:
+        jacobians = self._asset.root_physx_view.get_jacobians()
+        body_index = self._ee_body_id
+        if jacobians.shape[1] == len(self._body_names) - 1:
+            body_index -= 1
+        if body_index < 0:
+            raise RuntimeError("End-effector body cannot be the articulation root for IK.")
+
+        dof_offset = 6 if jacobians.shape[-1] == self._asset.num_joints + 6 else 0
+        joint_columns = torch.as_tensor(self._arm_joint_ids, device=self._env.device, dtype=torch.long) + dof_offset
+        return jacobians[:, body_index, :6, :].index_select(-1, joint_columns)
+
+    # ----- name resolution / scale construction ---------------------------
+
+    def _resolve_joint_ids(self, joint_names) -> list[int]:
+        if isinstance(joint_names, str):
+            joint_names = [joint_names]
+        out: list[int] = []
+        for pattern in joint_names:
+            matches = [i for i, name in enumerate(self._joint_names) if re.fullmatch(pattern, name)]
+            if not matches and pattern in self._joint_names:
+                matches = [self._joint_names.index(pattern)]
+            if not matches:
+                raise ValueError(f"Joint pattern '{pattern}' did not match any robot joint.")
+            out.extend(matches)
+        return out
+
+    def _resolve_body_id(self, body_name: str) -> int:
+        if body_name in self._body_names:
+            return self._body_names.index(body_name)
+        matches = [i for i, name in enumerate(self._body_names) if re.fullmatch(body_name, name)]
+        if not matches:
+            raise ValueError(f"Body '{body_name}' did not match any robot body.")
+        return matches[0]
+
+    def _make_dog_scale(self, scale_cfg) -> torch.Tensor:
+        names = [self._joint_names[i] for i in self._dog_joint_ids]
+        if isinstance(scale_cfg, dict):
+            values = []
+            for jn in names:
+                v = 0.45  # default to thigh/calf
+                for pat, val in scale_cfg.items():
+                    if re.fullmatch(pat, jn) or re.match(pat, jn):
+                        v = val
+                        break
+                values.append(v)
+            return torch.tensor(values, device=self._env.device, dtype=torch.float32)
+        return torch.full((len(self._dog_joint_ids),), float(scale_cfg), device=self._env.device)
+
+
+@configclass
+class VisualWholeBodyActionCfg(ActionTermCfg):
+    """Config for VWBC dog-only joint actions + env-driven arm IK."""
+
+    class_type: type[ActionTerm] = VisualWholeBodyAction
+
+    asset_name: str = "robot"
+    dog_joint_names: list[str] | tuple[str, ...] | str = ()
+    arm_joint_names: list[str] | tuple[str, ...] | str = ()
+    ee_body_name: str = "ee"
+    ee_goal_command_name: str = "ee_goal"
+
+    # Per-joint dog scale: hip 0.4, thigh/calf 0.45 — matches b1z1_config.action_scale.
+    scale: float | dict[str, float] = None  # set in __post_init__ of env
+
+    ik_damping: float = 0.05
+    clip_actions: float = 100.0
+
+    # Action delay buffer length (3 in VWBC: action_history_buf carries 5 = 3+2 slots).
+    action_delay: int = 3
+
+    # Global step at which the policy switches from reading [-1] to [-2] of the buffer.
+    # Equivalent to the `if self.global_steps < 10000 * 24` switch in manip_loco.step.
+    delay_curriculum_switch_steps: int = 10000 * 24

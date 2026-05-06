@@ -1,7 +1,7 @@
 # Copyright (c) 2024-2025 Ziqi Fan
 # SPDX-License-Identifier: Apache-2.0
 
-"""Gym registrations for Unitree GO2 + ARX X5 whole-body-control tasks."""
+"""Gym registrations for Unitree GO2 + ARX X5 visual_wholebody (VWBC) tasks."""
 
 import gymnasium as gym
 
@@ -37,3 +37,5 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:ArxX5WbcRoughPPORunnerCfg",
     },
 )
+
+
