@@ -37,3 +37,5 @@ _build
 
 # LSP
 pyrightconfig.json
+source/robot_lab/data/Robots/unitree/go2_x5_description
+tmp
