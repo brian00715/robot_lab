@@ -3,10 +3,9 @@
 
 import torch
 
-import isaaclab.utils.math as math_utils
-
 
 def camera_follow(env):
+    import isaaclab.utils.math as math_utils
     if not hasattr(camera_follow, "smooth_camera_positions"):
         camera_follow.smooth_camera_positions = []
     robot_pos = env.unwrapped.scene["robot"].data.root_pos_w[0]

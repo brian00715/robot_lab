@@ -100,34 +100,48 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    # spawn the robot randomly in the grid (instead of their terrain levels)
-    env_cfg.scene.terrain.max_init_terrain_level = None
-    # reduce the number of terrains to save memory
-    if env_cfg.scene.terrain.terrain_generator is not None:
-        env_cfg.scene.terrain.terrain_generator.num_rows = 5
-        env_cfg.scene.terrain.terrain_generator.num_cols = 5
-        env_cfg.scene.terrain.terrain_generator.curriculum = False
+    # ManagerBasedRLEnv specific: terrain, observations, events, curriculum
+    if hasattr(env_cfg, "observations"):
+        # spawn the robot randomly in the grid (instead of their terrain levels)
+        if hasattr(env_cfg.scene, "terrain") and env_cfg.scene.terrain is not None:
+            env_cfg.scene.terrain.max_init_terrain_level = None
+            # reduce the number of terrains to save memory
+            if hasattr(env_cfg.scene.terrain, "terrain_generator") and env_cfg.scene.terrain.terrain_generator is not None:
+                env_cfg.scene.terrain.terrain_generator.num_rows = 5
+                env_cfg.scene.terrain.terrain_generator.num_cols = 5
+                env_cfg.scene.terrain.terrain_generator.curriculum = False
 
-    # disable randomization for play
-    env_cfg.observations.policy.enable_corruption = False
-    # remove random pushing
-    env_cfg.events.randomize_apply_external_force_torque = None
-    env_cfg.events.push_robot = None
-    env_cfg.curriculum.command_levels = None
+        # disable randomization for play
+        if hasattr(env_cfg.observations, "policy") and hasattr(env_cfg.observations.policy, "enable_corruption"):
+            env_cfg.observations.policy.enable_corruption = False
+        # remove random pushing
+        if hasattr(env_cfg, "events") and env_cfg.events is not None:
+            if hasattr(env_cfg.events, "randomize_apply_external_force_torque"):
+                env_cfg.events.randomize_apply_external_force_torque = None
+            if hasattr(env_cfg.events, "push_robot"):
+                env_cfg.events.push_robot = None
+        if hasattr(env_cfg, "curriculum") and env_cfg.curriculum is not None:
+            if hasattr(env_cfg.curriculum, "command_levels"):
+                env_cfg.curriculum.command_levels = None
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
-        env_cfg.terminations.time_out = None
-        env_cfg.commands.base_velocity.debug_vis = False
-        config = Se2KeyboardCfg(
-            v_x_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_x[1],
-            v_y_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_y[1],
-            omega_z_sensitivity=env_cfg.commands.base_velocity.ranges.ang_vel_z[1],
-        )
+        if hasattr(env_cfg, "terminations") and env_cfg.terminations is not None:
+            env_cfg.terminations.time_out = None
+        if hasattr(env_cfg, "commands") and env_cfg.commands is not None:
+            env_cfg.commands.base_velocity.debug_vis = False
+            config = Se2KeyboardCfg(
+                v_x_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_x[1],
+                v_y_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_y[1],
+                omega_z_sensitivity=env_cfg.commands.base_velocity.ranges.ang_vel_z[1],
+            )
+        else:
+            config = Se2KeyboardCfg()
         controller = Se2Keyboard(config)
-        env_cfg.observations.policy.velocity_commands = ObsTerm(
-            func=lambda env: torch.tensor(controller.advance(), dtype=torch.float32).unsqueeze(0).to(env.device),
-        )
+        if hasattr(env_cfg, "observations") and hasattr(env_cfg.observations, "policy"):
+            env_cfg.observations.policy.velocity_commands = ObsTerm(
+                func=lambda env: torch.tensor(controller.advance(), dtype=torch.float32).unsqueeze(0).to(env.device),
+            )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -181,7 +195,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     runner.load(resume_path)
 
     # obtain the trained policy for inference
-    policy = runner.get_inference_policy(device=env.unwrapped.device)
+    # Note: get_inference_policy returns the raw actor MLP, but we need the full
+    # ActorCritic so that obs extraction + normalization happen before the actor forward.
+    # Use act_inference() which does: extract "policy" obs → normalize → actor(...) → mean action.
 
     # extract the neural network module
     # we do this in a try-except to maintain backwards compatibility.
@@ -206,6 +222,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
+    device = env.unwrapped.device
+
+    # ensure policy is on the correct device
+    policy_nn.to(device)
+    policy_nn.eval()
 
     # reset environment
     obs = env.get_observations()
@@ -215,9 +236,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         start_time = time.time()
         # run everything in inference mode
         with torch.inference_mode():
-            # agent stepping
-            actions = policy(obs)
-            # actions = torch.zeros_like(actions)
+            # agent stepping — move obs to policy device + proper obs extraction/normalization
+            actions = policy_nn.act_inference(obs.to(device))
             # env stepping
             obs, _, _, _ = env.step(actions)
         if args_cli.video:
