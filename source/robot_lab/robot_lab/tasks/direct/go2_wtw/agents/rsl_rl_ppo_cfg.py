@@ -6,14 +6,30 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 
 
 @configclass
+class Go2WTWActorCriticCfg(RslRlPpoActorCriticCfg):
+    class_name = "Go2WTWActorCritic"
+    adaptation_module_branch_hidden_dims = [256, 128]
+
+
+@configclass
+class Go2WTWPPOAlgorithmCfg(RslRlPpoAlgorithmCfg):
+    class_name = "Go2WTWPPO"
+    adaptation_module_learning_rate = 1.0e-3
+    num_adaptation_module_substeps = 1
+    selective_adaptation_module_loss = False
+
+
+@configclass
 class Go2WalkTheseWaysPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 30000
     save_interval = 200
     experiment_name = "go2_walk_these_ways"
     empirical_normalization = False
+    clip_actions = 10.0
+    obs_groups = {"policy": ["obs_history"], "critic": ["obs_history", "privileged"]}
 
-    policy = RslRlPpoActorCriticCfg(
+    policy = Go2WTWActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,
         critic_obs_normalization=False,
@@ -21,7 +37,7 @@ class Go2WalkTheseWaysPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         critic_hidden_dims=[512, 256, 128],
         activation="elu",
     )
-    algorithm = RslRlPpoAlgorithmCfg(
+    algorithm = Go2WTWPPOAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,

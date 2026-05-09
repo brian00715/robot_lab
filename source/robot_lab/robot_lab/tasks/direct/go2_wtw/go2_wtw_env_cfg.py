@@ -8,6 +8,7 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import PhysxCfg, SimulationCfg
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 
 from robot_lab.assets.unitree import UNITREE_GO2_CFG
@@ -30,7 +31,8 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
             gpu_total_aggregate_pairs_capacity=2**23,
         ),
     )
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=3.0, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=1.0, replicate_physics=True)
+    terrain: TerrainImporterCfg = TerrainImporterCfg(prim_path="/World/ground", terrain_type="plane", debug_vis=False)
 
     # ------------ robot asset -------------------------------------------------------
     # Actuator gains matching go2_config: Kp=25, Kd=0.6, clip at 23.5 Nm
@@ -52,27 +54,45 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ observation / action spaces ---------------------------------------
     # obs: gravity(3) + cmd(15)*scale + dof_pos(12) + dof_vel(12) + actions(12) + last_actions(12) + clock(4) = 70
     observation_space: int = 70
+    num_scalar_observations: int = 70
+    num_observation_history: int = 30
+    num_privileged_obs: int = 2
     action_space: int = 12
-    state_space: int = 0  # no asymmetric critic obs by default
+    state_space: int = 2
 
     # ------------ commands ----------------------------------------------------------
     num_commands: int = 15
     # command limits (used by curriculum)
-    lin_vel_x: tuple = (-0.6, 0.6)          # [m/s]
+    lin_vel_x: tuple = (-1.0, 1.0)          # [m/s]
     lin_vel_y: tuple = (-0.6, 0.6)          # [m/s]
     ang_vel_yaw: tuple = (-1.0, 1.0)        # [rad/s]
-    body_height_cmd: tuple = (-0.05, 0.05)  # [m] relative to nominal 0.34 m
+    body_height_cmd: tuple = (-0.25, 0.15)  # [m] relative to nominal 0.34 m
     gait_frequency_cmd_range: tuple = (2.0, 4.0)   # [Hz]
     gait_phase_cmd_range: tuple = (0.0, 1.0)
     gait_offset_cmd_range: tuple = (0.0, 1.0)
     gait_bound_cmd_range: tuple = (0.0, 1.0)
     gait_duration_cmd_range: tuple = (0.5, 0.5)
-    footswing_height_range: tuple = (0.06, 0.24)   # [m]
-    body_pitch_range: tuple = (0.0, 0.0)
-    body_roll_range: tuple = (0.0, 0.0)
-    stance_width_range: tuple = (0.25, 0.45)
+    footswing_height_range: tuple = (0.03, 0.35)   # [m]
+    body_pitch_range: tuple = (-0.4, 0.4)
+    body_roll_range: tuple = (-0.0, 0.0)
+    stance_width_range: tuple = (0.10, 0.45)
     stance_length_range: tuple = (0.35, 0.45)
     aux_reward_coef_range: tuple = (0.0, 0.0)
+    limit_vel_x: tuple = (-5.0, 5.0)
+    limit_vel_y: tuple = (-0.6, 0.6)
+    limit_vel_yaw: tuple = (-5.0, 5.0)
+    limit_body_height: tuple = (-0.25, 0.15)
+    limit_gait_frequency: tuple = (2.0, 4.0)
+    limit_gait_phase: tuple = (0.0, 1.0)
+    limit_gait_offset: tuple = (0.0, 1.0)
+    limit_gait_bound: tuple = (0.0, 1.0)
+    limit_gait_duration: tuple = (0.5, 0.5)
+    limit_footswing_height: tuple = (0.03, 0.35)
+    limit_body_pitch: tuple = (-0.4, 0.4)
+    limit_body_roll: tuple = (-0.0, 0.0)
+    limit_stance_width: tuple = (0.10, 0.45)
+    limit_stance_length: tuple = (0.35, 0.45)
+    limit_aux_reward_coef: tuple = (0.0, 0.0)
 
     resampling_time: float = 10.0  # [s] time between command resamples
     heading_command: bool = False
@@ -80,8 +100,23 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ command curriculum ------------------------------------------------
     command_curriculum: bool = True
     # Velocity bins (curriculum expands over velocity space)
-    num_lin_vel_bins: int = 21
-    num_ang_vel_bins: int = 21
+    num_bins_vel_x: int = 21
+    num_bins_vel_y: int = 1
+    num_bins_vel_yaw: int = 21
+    num_bins_body_height: int = 1
+    num_bins_gait_frequency: int = 1
+    num_bins_gait_phase: int = 1
+    num_bins_gait_offset: int = 1
+    num_bins_gait_bound: int = 1
+    num_bins_gait_duration: int = 1
+    num_bins_footswing_height: int = 1
+    num_bins_body_pitch: int = 1
+    num_bins_body_roll: int = 1
+    num_bins_stance_width: int = 1
+    num_bins_stance_length: int = 1
+    num_bins_aux_reward_coef: int = 1
+    num_lin_vel_bins: int = 21  # compatibility alias
+    num_ang_vel_bins: int = 21  # compatibility alias
     # Gait params: 1 bin each in pretrain (full range sampled uniformly, no curriculum expansion)
     # Distill stage increases these to enable gait-space curriculum
     num_gait_freq_bins: int = 1
@@ -97,12 +132,15 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # Gait categories (used for gaitwise curriculum)
     gaitwise_curricula: bool = True
     exclusive_phase_offset: bool = False
+    binary_phases: bool = True
+    pacing_offset: bool = False
+    balance_gait_distribution: bool = True
 
     # Curriculum success thresholds (fraction of max reward per step)
     curriculum_tracking_lin_vel: float = 0.8
     curriculum_tracking_ang_vel: float = 0.7
-    curriculum_tracking_contacts_shaped_force: float = 0.80
-    curriculum_tracking_contacts_shaped_vel: float = 0.80
+    curriculum_tracking_contacts_shaped_force: float = 0.90
+    curriculum_tracking_contacts_shaped_vel: float = 0.90
 
     # ------------ control -----------------------------------------------------------
     action_scale: float = 0.25
@@ -128,7 +166,7 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
 
     # Command observation scales (per-command-dim)
     # [vx, vy, yaw, height, freq, phase, offset, bound, duration, swing_h,
-    #  pitch, roll, aux, stance_w, stance_l]
+    #  pitch, roll, stance_w, stance_l, aux]
     cmd_scale_lin_vel: float = 2.0
     cmd_scale_ang_vel: float = 0.25
     cmd_scale_body_height: float = 2.0
@@ -153,7 +191,7 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ rewards ----------------------------------------------------------
     # Positive/negative reward handling (ji22-style)
     only_positive_rewards_ji22_style: bool = True
-    sigma_rew_neg: float = 5.0
+    sigma_rew_neg: float = 0.02
     only_positive_rewards: bool = False
 
     # Gait reward parameters
@@ -210,8 +248,10 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ domain randomization ---------------------------------------------
     randomize_friction: bool = True
     friction_range: tuple = (0.1, 3.0)
+    friction_obs_range: tuple = (0.0, 1.0)
     randomize_restitution: bool = True
     restitution_range: tuple = (0.0, 0.4)
+    restitution_obs_range: tuple = (0.0, 1.0)
     randomize_base_mass: bool = True
     added_mass_range: tuple = (-1.0, 3.0)
     randomize_com_displacement: bool = False
@@ -238,8 +278,10 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
 
     # ------------ init state -------------------------------------------------------
     init_pos_z: float = 0.34
-    init_yaw_range: float = 0.0  # random yaw on reset
+    init_x_range: float = 0.2
+    init_y_range: float = 0.2
+    init_yaw_range: float = 3.14  # random yaw on reset
     init_vel_range: float = 0.5  # random base velocity on reset
 
     clip_observations: float = 100.0
-    clip_actions: float = 100.0
+    clip_actions: float = 10.0

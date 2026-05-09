@@ -57,6 +57,14 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import robot_lab.tasks  # noqa: F401
 
 
+def _register_go2_wtw_rma_classes():
+    from robot_lab.tasks.direct.go2_wtw.agents.rsl_rl_rma import Go2WTWActorCritic, Go2WTWPPO
+    import rsl_rl.runners.on_policy_runner as on_policy_runner
+
+    on_policy_runner.Go2WTWActorCritic = Go2WTWActorCritic
+    on_policy_runner.Go2WTWPPO = Go2WTWPPO
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: DirectRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     task_name = args_cli.task.split(":")[-1]
@@ -87,6 +95,7 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
 
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    _register_go2_wtw_rma_classes()
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     runner.load(resume_path)
     policy = runner.get_inference_policy(device=env.unwrapped.device)

@@ -20,7 +20,7 @@ from isaaclab.markers.config import (
     SPHERE_MARKER_CFG,
 )
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+from isaaclab.terrains import TerrainImporter
 from isaaclab.utils.math import (
     quat_apply_yaw,
     quat_conjugate,
@@ -66,6 +66,8 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.termination_contact_indices, _ = self.contact_sensor.find_bodies("base")
         self.penalised_contact_indices = sorted(self.penalised_contact_indices)
         self.termination_contact_indices = sorted(self.termination_contact_indices)
+        base_idx, _ = self.robot.find_bodies("base")
+        self.robot_base_index = int(base_idx[0])
 
         # ---- dof limits (soft, already factored by soft_joint_pos_limit_factor) -----
         self.dof_pos_limits = self.robot.data.soft_joint_pos_limits[0]  # [12, 2]
@@ -132,6 +134,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         # ---- noise scale vector ----------------------------------------------
         self.noise_scale_vec = self._build_noise_scale_vec()
+        self.obs_history = torch.zeros(
+            self.num_envs,
+            self.cfg.num_observation_history * self.cfg.num_scalar_observations,
+            device=self.device,
+        )
 
         # ---- command curriculum ----------------------------------------------
         self._init_command_distribution()
@@ -191,6 +198,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             "dof_pos": self.cfg.rew_dof_pos,
             "feet_air_time": self.cfg.rew_feet_air_time,
         }
+        self.reward_scales = {name: scale * self.step_dt for name, scale in self.reward_scales.items()}
         self.episode_sums = {k: torch.zeros(self.num_envs, device=self.device) for k in self.reward_names}
         self.episode_sums["total"] = torch.zeros(self.num_envs, device=self.device)
         self.command_sums = {k: torch.zeros(self.num_envs, device=self.device) for k in self.reward_names}
@@ -202,7 +210,10 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         # ---- startup DR -------------------------------------------------------
         env_ids = torch.arange(self.num_envs, device=self.device)
+        self._cache_default_rigid_body_props()
         self._randomize_rigid_body_props(env_ids)
+        self._refresh_actor_rigid_body_props(env_ids)
+        self._refresh_actor_material_props(env_ids)
         self._randomize_dof_props(env_ids)
 
         if self.cfg.enable_debug_vis:
@@ -214,19 +225,12 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
     def _setup_scene(self):
         self.robot = Articulation(self.cfg.robot)
-        spawn_ground_plane(
-            prim_path="/World/ground",
-            cfg=GroundPlaneCfg(
-                physics_material=sim_utils.RigidBodyMaterialCfg(
-                    static_friction=1.0,
-                    dynamic_friction=1.0,
-                    restitution=0.0,
-                )
-            ),
-        )
+        self.cfg.terrain.num_envs = self.scene.cfg.num_envs
+        self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
+        self.terrain = TerrainImporter(self.cfg.terrain)
         self.scene.clone_environments(copy_from_source=False)
         if self.device == "cpu":
-            self.scene.filter_collisions(global_prim_paths=["/World/ground"])
+            self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
         self.scene.articulations["robot"] = self.robot
 
         # Contact sensor for ALL robot bodies (needed for feet + termination + collision)
@@ -320,6 +324,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         # Randomize physics properties on reset
         self._randomize_rigid_body_props(env_ids)
+        self._refresh_actor_rigid_body_props(env_ids)
         self._refresh_actor_material_props(env_ids)
         self._randomize_dof_props(env_ids)
 
@@ -333,6 +338,12 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # Reset root state
         root_state = self.robot.data.default_root_state[env_ids].clone()
         root_state[:, :3] += self.scene.env_origins[env_ids]
+        root_state[:, 0] += torch.empty(len(env_ids), device=self.device).uniform_(
+            -self.cfg.init_x_range, self.cfg.init_x_range
+        )
+        root_state[:, 1] += torch.empty(len(env_ids), device=self.device).uniform_(
+            -self.cfg.init_y_range, self.cfg.init_y_range
+        )
         root_state[:, 2] = self.cfg.init_pos_z + self.scene.env_origins[env_ids, 2]
 
         # Random yaw
@@ -360,6 +371,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.last_last_joint_pos_target[env_ids] = 0.0
         self.feet_air_time[env_ids] = 0.0
         self.gait_indices[env_ids] = 0.0
+        self.obs_history[env_ids] = 0.0
         for buf in self.lag_buffer:
             buf[env_ids] = 0.0
 
@@ -396,11 +408,18 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             obs = obs + (2.0 * torch.rand_like(obs) - 1.0) * self.noise_scale_vec
 
         obs = torch.clip(obs, -self.cfg.clip_observations, self.cfg.clip_observations)
+        self.obs_history = torch.cat([self.obs_history[:, self.cfg.num_scalar_observations :], obs], dim=-1)
 
         # Privileged observations for teacher (friction + restitution per env)
-        priv_obs = torch.cat([self.friction_coeffs, self.restitutions], dim=-1)  # [N, 2]
+        priv_obs = torch.cat(
+            [
+                self._scale_shift(self.friction_coeffs, self.cfg.friction_obs_range),
+                self._scale_shift(self.restitutions, self.cfg.restitution_obs_range),
+            ],
+            dim=-1,
+        )
 
-        return {"policy": obs, "privileged": priv_obs}
+        return {"policy": obs, "obs_history": self.obs_history, "privileged": priv_obs}
 
     # ==========================================================================
     # Periodic in-episode updates
@@ -430,6 +449,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         if len(rand_ids) > 0:
             if self.cfg.randomize_rigids_after_start:
                 self._randomize_rigid_body_props(rand_ids)
+                self._refresh_actor_rigid_body_props(rand_ids)
                 self._refresh_actor_material_props(rand_ids)
             self._randomize_dof_props(rand_ids)
 
@@ -764,65 +784,105 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # ==========================================================================
 
     def _init_command_distribution(self):
-        self.category_names = ["trot", "pace", "bound", "pronk"]
+        self.category_names = ["pronk", "trot", "pace", "bound"]
 
         kw = dict(
-            vel_x=(self.cfg.lin_vel_x[0], self.cfg.lin_vel_x[1], self.cfg.num_lin_vel_bins),
-            vel_y=(self.cfg.lin_vel_y[0], self.cfg.lin_vel_y[1], 3),
-            vel_yaw=(self.cfg.ang_vel_yaw[0], self.cfg.ang_vel_yaw[1], self.cfg.num_ang_vel_bins),
-            body_height=(self.cfg.body_height_cmd[0], self.cfg.body_height_cmd[1], 1),
+            x_vel=(self.cfg.limit_vel_x[0], self.cfg.limit_vel_x[1], self.cfg.num_bins_vel_x),
+            y_vel=(self.cfg.limit_vel_y[0], self.cfg.limit_vel_y[1], self.cfg.num_bins_vel_y),
+            yaw_vel=(self.cfg.limit_vel_yaw[0], self.cfg.limit_vel_yaw[1], self.cfg.num_bins_vel_yaw),
+            body_height=(self.cfg.limit_body_height[0], self.cfg.limit_body_height[1], self.cfg.num_bins_body_height),
             gait_frequency=(
-                self.cfg.gait_frequency_cmd_range[0],
-                self.cfg.gait_frequency_cmd_range[1],
-                self.cfg.num_gait_freq_bins,
+                self.cfg.limit_gait_frequency[0],
+                self.cfg.limit_gait_frequency[1],
+                self.cfg.num_bins_gait_frequency,
             ),
             gait_phase=(
-                self.cfg.gait_phase_cmd_range[0],
-                self.cfg.gait_phase_cmd_range[1],
-                self.cfg.num_gait_phase_bins,
+                self.cfg.limit_gait_phase[0],
+                self.cfg.limit_gait_phase[1],
+                self.cfg.num_bins_gait_phase,
             ),
             gait_offset=(
-                self.cfg.gait_offset_cmd_range[0],
-                self.cfg.gait_offset_cmd_range[1],
-                self.cfg.num_gait_offset_bins,
+                self.cfg.limit_gait_offset[0],
+                self.cfg.limit_gait_offset[1],
+                self.cfg.num_bins_gait_offset,
             ),
-            gait_bound=(
-                self.cfg.gait_bound_cmd_range[0],
-                self.cfg.gait_bound_cmd_range[1],
-                self.cfg.num_gait_bound_bins,
+            gait_bounds=(
+                self.cfg.limit_gait_bound[0],
+                self.cfg.limit_gait_bound[1],
+                self.cfg.num_bins_gait_bound,
             ),
             gait_duration=(
-                self.cfg.gait_duration_cmd_range[0],
-                self.cfg.gait_duration_cmd_range[1],
-                self.cfg.num_gait_duration_bins,
+                self.cfg.limit_gait_duration[0],
+                self.cfg.limit_gait_duration[1],
+                self.cfg.num_bins_gait_duration,
             ),
             footswing_height=(
-                self.cfg.footswing_height_range[0],
-                self.cfg.footswing_height_range[1],
-                self.cfg.num_footswing_bins,
+                self.cfg.limit_footswing_height[0],
+                self.cfg.limit_footswing_height[1],
+                self.cfg.num_bins_footswing_height,
             ),
-            body_pitch=(self.cfg.body_pitch_range[0], self.cfg.body_pitch_range[1], 1),
-            body_roll=(self.cfg.body_roll_range[0], self.cfg.body_roll_range[1], 1),
-            aux_reward_coef=(self.cfg.aux_reward_coef_range[0], self.cfg.aux_reward_coef_range[1], 1),
+            body_pitch=(self.cfg.limit_body_pitch[0], self.cfg.limit_body_pitch[1], self.cfg.num_bins_body_pitch),
+            body_roll=(self.cfg.limit_body_roll[0], self.cfg.limit_body_roll[1], self.cfg.num_bins_body_roll),
             stance_width=(
-                self.cfg.stance_width_range[0],
-                self.cfg.stance_width_range[1],
-                self.cfg.num_stance_width_bins,
+                self.cfg.limit_stance_width[0],
+                self.cfg.limit_stance_width[1],
+                self.cfg.num_bins_stance_width,
             ),
             stance_length=(
-                self.cfg.stance_length_range[0],
-                self.cfg.stance_length_range[1],
-                self.cfg.num_stance_length_bins,
+                self.cfg.limit_stance_length[0],
+                self.cfg.limit_stance_length[1],
+                self.cfg.num_bins_stance_length,
+            ),
+            aux_reward_coef=(
+                self.cfg.limit_aux_reward_coef[0],
+                self.cfg.limit_aux_reward_coef[1],
+                self.cfg.num_bins_aux_reward_coef,
             ),
         )
 
-        low = np.array([v[0] for v in kw.values()])
-        high = np.array([v[1] for v in kw.values()])
+        low = np.array(
+            [
+                self.cfg.lin_vel_x[0],
+                self.cfg.lin_vel_y[0],
+                self.cfg.ang_vel_yaw[0],
+                self.cfg.body_height_cmd[0],
+                self.cfg.gait_frequency_cmd_range[0],
+                self.cfg.gait_phase_cmd_range[0],
+                self.cfg.gait_offset_cmd_range[0],
+                self.cfg.gait_bound_cmd_range[0],
+                self.cfg.gait_duration_cmd_range[0],
+                self.cfg.footswing_height_range[0],
+                self.cfg.body_pitch_range[0],
+                self.cfg.body_roll_range[0],
+                self.cfg.stance_width_range[0],
+                self.cfg.stance_length_range[0],
+                self.cfg.aux_reward_coef_range[0],
+            ]
+        )
+        high = np.array(
+            [
+                self.cfg.lin_vel_x[1],
+                self.cfg.lin_vel_y[1],
+                self.cfg.ang_vel_yaw[1],
+                self.cfg.body_height_cmd[1],
+                self.cfg.gait_frequency_cmd_range[1],
+                self.cfg.gait_phase_cmd_range[1],
+                self.cfg.gait_offset_cmd_range[1],
+                self.cfg.gait_bound_cmd_range[1],
+                self.cfg.gait_duration_cmd_range[1],
+                self.cfg.footswing_height_range[1],
+                self.cfg.body_pitch_range[1],
+                self.cfg.body_roll_range[1],
+                self.cfg.stance_width_range[1],
+                self.cfg.stance_length_range[1],
+                self.cfg.aux_reward_coef_range[1],
+            ]
+        )
 
         self.curricula = []
         for i, _ in enumerate(self.category_names):
             c = RewardThresholdCurriculum(seed=self.cfg.curriculum_seed + i, **kw)
-            c.set_to(low, high, value=1.0)
+            c.set_to(low=low, high=high)
             self.curricula.append(c)
 
         self.env_command_bins = np.zeros(self.num_envs, dtype=int)
@@ -910,6 +970,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
                 self.commands[ids, 6] = (self.commands[ids, 6] / 2 - 0.25) % 1
                 self.commands[ids, 7] = (self.commands[ids, 7] / 2 - 0.25) % 1
 
+        if self.cfg.binary_phases:
+            self.commands[env_ids, 5] = torch.round(2 * self.commands[env_ids, 5]) / 2.0 % 1
+            self.commands[env_ids, 6] = torch.round(2 * self.commands[env_ids, 6]) / 2.0 % 1
+            self.commands[env_ids, 7] = torch.round(2 * self.commands[env_ids, 7]) / 2.0 % 1
+
         # Zero small xy velocity commands (dead zone)
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
@@ -920,6 +985,23 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # ==========================================================================
     # Domain randomization
     # ==========================================================================
+
+    def _cache_default_rigid_body_props(self):
+        self.default_base_mass = None
+        self.default_base_com = None
+        view = getattr(self.robot, "root_physx_view", None)
+        if view is None:
+            return
+        try:
+            masses = view.get_masses()
+            self.default_base_mass = masses[:, self.robot_base_index].clone()
+        except Exception:
+            self.default_base_mass = None
+        try:
+            coms = view.get_coms()
+            self.default_base_com = coms[:, self.robot_base_index].clone()
+        except Exception:
+            self.default_base_com = None
 
     def _randomize_rigid_body_props(self, env_ids: torch.Tensor):
         if self.cfg.randomize_base_mass:
@@ -937,6 +1019,28 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         if self.cfg.randomize_restitution:
             lo, hi = self.cfg.restitution_range
             self.restitutions[env_ids] = torch.empty(len(env_ids), 1, device=self.device).uniform_(lo, hi)
+
+    def _refresh_actor_rigid_body_props(self, env_ids: torch.Tensor):
+        """Push randomized base mass and COM to PhysX when tensor views are available."""
+        view = getattr(self.robot, "root_physx_view", None)
+        if view is None:
+            return
+        env_ids_cpu = env_ids.cpu()
+        if self.default_base_mass is not None:
+            try:
+                masses = view.get_masses()
+                masses[env_ids, self.robot_base_index] = self.default_base_mass[env_ids] + self.payloads[env_ids]
+                view.set_masses(masses, env_ids_cpu)
+            except Exception:
+                pass
+        if self.default_base_com is not None:
+            try:
+                coms = view.get_coms()
+                coms[env_ids, self.robot_base_index] = self.default_base_com[env_ids]
+                coms[env_ids, self.robot_base_index, :3] += self.com_displacements[env_ids]
+                view.set_coms(coms, env_ids_cpu)
+            except Exception:
+                pass
 
     def _refresh_actor_material_props(self, env_ids: torch.Tensor):
         """Push randomized friction/restitution to simulation."""
@@ -985,8 +1089,27 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         elif self.cfg.randomize_gravity:
             lo, hi = self.cfg.gravity_range
             self.gravities[:] = torch.empty(3, device=self.device).uniform_(lo, hi).unsqueeze(0)
-        # Update gravity_vec for orientation reward
         g = self.gravities[0] + torch.tensor([0.0, 0.0, -9.8], device=self.device)
+        self.cfg.sim.gravity = tuple(float(v) for v in g.detach().cpu())
+        try:
+            from pxr import Gf, UsdPhysics
+
+            stage = self.sim.stage
+            scene_prim = stage.GetPrimAtPath("/physicsScene")
+            if not scene_prim.IsValid():
+                scene_prim = stage.GetPrimAtPath("/World/physicsScene")
+            if scene_prim.IsValid():
+                physics_scene = UsdPhysics.Scene(scene_prim)
+                gravity = g.detach().cpu().numpy()
+                gravity_mag = float(np.linalg.norm(gravity))
+                gravity_dir = gravity / gravity_mag if gravity_mag > 0.0 else gravity
+                physics_scene.CreateGravityDirectionAttr(Gf.Vec3f(*gravity_dir.tolist())).Set(
+                    Gf.Vec3f(*gravity_dir.tolist())
+                )
+                physics_scene.CreateGravityMagnitudeAttr(gravity_mag).Set(gravity_mag)
+        except Exception:
+            pass
+        # Update gravity_vec for orientation reward.
         self.gravity_vec[:] = (g / g.norm()).unsqueeze(0)
 
     def _push_robots(self, env_ids: torch.Tensor):
@@ -1001,6 +1124,13 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # ==========================================================================
     # Helpers
     # ==========================================================================
+
+    @staticmethod
+    def _scale_shift(value: torch.Tensor, value_range: tuple[float, float]) -> torch.Tensor:
+        lo, hi = value_range
+        scale = 2.0 / (hi - lo)
+        shift = (hi + lo) / 2.0
+        return (value - shift) * scale
 
     def _build_commands_scale(self) -> torch.Tensor:
         s = self.cfg
@@ -1017,9 +1147,9 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             s.cmd_scale_footswing_height,
             s.cmd_scale_body_pitch,
             s.cmd_scale_body_roll,
-            s.cmd_scale_aux_reward,
             s.cmd_scale_stance_width,
             s.cmd_scale_stance_length,
+            s.cmd_scale_aux_reward,
         ]
         return torch.tensor(scale[: self.cfg.num_commands], dtype=torch.float32, device=self.device)
 

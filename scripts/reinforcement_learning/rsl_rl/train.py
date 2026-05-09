@@ -100,6 +100,16 @@ torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
 
+def _register_go2_wtw_rma_classes(task_name: str | None):
+    if task_name is None or "WalkTheseWays" not in task_name:
+        return
+    from robot_lab.tasks.direct.go2_wtw.agents.rsl_rl_rma import Go2WTWActorCritic, Go2WTWPPO
+    import rsl_rl.runners.on_policy_runner as on_policy_runner
+
+    on_policy_runner.Go2WTWActorCritic = Go2WTWActorCritic
+    on_policy_runner.Go2WTWPPO = Go2WTWPPO
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Train with RSL-RL agent."""
@@ -179,6 +189,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+
+    _register_go2_wtw_rma_classes(args_cli.task)
 
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
