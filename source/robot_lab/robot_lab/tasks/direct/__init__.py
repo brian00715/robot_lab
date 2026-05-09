@@ -9,3 +9,5 @@ Direct workflow environments.
 """
 
 import gymnasium as gym
+
+from . import go2_wtw  # noqa: F401
