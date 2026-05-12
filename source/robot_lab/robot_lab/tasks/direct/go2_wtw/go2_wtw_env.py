@@ -1263,6 +1263,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         base_pos = self.robot.data.root_pos_w.clone()  # [N, 3]
         base_quat = self.robot.data.root_quat_w  # [N, 4] wxyz
+        _, _, cur_yaw = euler_xyz_from_quat(base_quat)
 
         zeros = torch.zeros(self.num_envs, device=self.device)
 
@@ -1272,8 +1273,18 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         default_scale = self._vis_cmd_vel.cfg.markers["arrow"].scale
 
         # --- commanded XY velocity arrow (green) ---
-        cmd_vxy = self.commands[:, :2]  # [N, 2]
-        cmd_speed = torch.linalg.norm(cmd_vxy, dim=1)  # [N]
+        # Commands are body-frame velocities. Rotate by base yaw so the marker is drawn in world frame.
+        cmd_vxy_body = self.commands[:, :2]
+        yaw_cos = torch.cos(cur_yaw)
+        yaw_sin = torch.sin(cur_yaw)
+        cmd_vxy = torch.stack(
+            [
+                yaw_cos * cmd_vxy_body[:, 0] - yaw_sin * cmd_vxy_body[:, 1],
+                yaw_sin * cmd_vxy_body[:, 0] + yaw_cos * cmd_vxy_body[:, 1],
+            ],
+            dim=1,
+        )
+        cmd_speed = torch.linalg.norm(cmd_vxy_body, dim=1)
         cmd_heading = torch.atan2(cmd_vxy[:, 1], cmd_vxy[:, 0])
         cmd_vel_quat = quat_from_euler_xyz(zeros, zeros, cmd_heading)
         cmd_vel_scale = torch.tensor(default_scale, device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
@@ -1283,7 +1294,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self._vis_cmd_vel.visualize(arrow_pos, cmd_vel_quat, cmd_vel_scale)
 
         # --- current XY velocity arrow (blue) — same position, same scale formula ---
-        cur_vxy = self.base_lin_vel[:, :2]  # [N, 2] world frame
+        cur_vxy = self.robot.data.root_lin_vel_w[:, :2]
         cur_speed = torch.linalg.norm(cur_vxy, dim=1)
         cur_heading = torch.atan2(cur_vxy[:, 1], cur_vxy[:, 0])
         cur_vel_quat = quat_from_euler_xyz(zeros, zeros, cur_heading)
@@ -1299,7 +1310,6 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # --- commanded pose frame: 3 cylinders at commanded height ---
         # CylinderCfg axis="X/Y/Z" bakes the long-axis direction into the prim;
         # cmd_pose_quat rotates the entire frame in world space — no per-axis offset needed.
-        _, _, cur_yaw = euler_xyz_from_quat(base_quat)
         cmd_roll = self.commands[:, 11]
         cmd_pitch = self.commands[:, 10]
         cmd_pose_quat = quat_from_euler_xyz(cmd_roll, cmd_pitch, cur_yaw)
