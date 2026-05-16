@@ -23,7 +23,7 @@ class Go2WTWPPOAlgorithmCfg(RslRlPpoAlgorithmCfg):
 class Go2WalkTheseWaysPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 30000
-    save_interval = 200
+    save_interval = 1000
     experiment_name = "go2_walk_these_ways"
     empirical_normalization = False
     clip_actions = 10.0

@@ -139,8 +139,8 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # Curriculum success thresholds (fraction of max reward per step)
     curriculum_tracking_lin_vel: float = 0.8
     curriculum_tracking_ang_vel: float = 0.7
-    curriculum_tracking_contacts_shaped_force: float = 0.90
-    curriculum_tracking_contacts_shaped_vel: float = 0.90
+    curriculum_tracking_contacts_shaped_force: float = 0.72
+    curriculum_tracking_contacts_shaped_vel: float = 0.72
 
     # ------------ control -----------------------------------------------------------
     action_scale: float = 0.25
@@ -169,7 +169,7 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     #  pitch, roll, stance_w, stance_l, aux]
     cmd_scale_lin_vel: float = 2.0
     cmd_scale_ang_vel: float = 0.25
-    cmd_scale_body_height: float = 2.0
+    cmd_scale_body_height: float = 4.0
     cmd_scale_gait_freq: float = 1.0
     cmd_scale_gait_phase: float = 1.0
     cmd_scale_footswing_height: float = 0.15
@@ -191,7 +191,8 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ rewards ----------------------------------------------------------
     # Positive/negative reward handling (ji22-style)
     only_positive_rewards_ji22_style: bool = True
-    sigma_rew_neg: float = 0.02
+    reward_split_mode: str = "isaacgym"  # "isaacgym" matches original WTW term-level split; "per_env_clip" is previous port behavior
+    sigma_rew_neg: float = 5.0
     only_positive_rewards: bool = False
 
     # Gait reward parameters

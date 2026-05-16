@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import copy
 import os
 import sys
 
@@ -55,6 +56,48 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import robot_lab.tasks  # noqa: F401
+
+
+class _OnnxActorWrapper(torch.nn.Module):
+    def __init__(self, actor: torch.nn.Module, normalizer: torch.nn.Module | None):
+        super().__init__()
+        self.actor = copy.deepcopy(actor)
+        self.normalizer = copy.deepcopy(normalizer) if normalizer is not None else torch.nn.Identity()
+
+    def forward(self, obs: torch.Tensor):
+        return self.actor(self.normalizer(obs))
+
+
+def _export_policy(policy_nn, normalizer, export_dir: str):
+    os.makedirs(export_dir, exist_ok=True)
+    try:
+        export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.pt")
+    except Exception as exc:
+        print(f"[WARN] Failed to export TorchScript policy; continuing play: {exc}")
+    try:
+        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.onnx")
+    except Exception as exc:
+        actor = getattr(policy_nn, "actor", None)
+        adaptation_module = getattr(actor, "adaptation_module", None)
+        if adaptation_module is None or not hasattr(adaptation_module[0], "in_features"):
+            print(f"[WARN] Failed to export ONNX policy; continuing play: {exc}")
+            return
+        try:
+            wrapper = _OnnxActorWrapper(actor, normalizer).to("cpu").eval()
+            obs = torch.zeros(1, adaptation_module[0].in_features)
+            torch.onnx.export(
+                wrapper,
+                obs,
+                os.path.join(export_dir, "policy.onnx"),
+                export_params=True,
+                opset_version=18,
+                input_names=["obs"],
+                output_names=["actions"],
+                dynamic_axes={},
+            )
+            print(f"[WARN] IsaacLab ONNX exporter does not support {type(actor).__name__}: {exc}")
+        except Exception as fallback_exc:
+            print(f"[WARN] Failed to export CSE ONNX policy; continuing play: {fallback_exc}")
 
 
 def _register_go2_wtw_rma_classes():
@@ -107,9 +150,8 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     except AttributeError:
         policy_nn = runner.alg.actor_critic
     normalizer = getattr(policy_nn, "actor_obs_normalizer", None)
-    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.onnx")
-    print(f"[INFO] Exported policy to {export_dir}/policy.pt and policy.onnx")
+    _export_policy(policy_nn, normalizer, export_dir)
+    print(f"[INFO] Policy export attempted in {export_dir}")
 
     obs = env.get_observations()
     timestep = 0

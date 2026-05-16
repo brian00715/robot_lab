@@ -55,10 +55,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # IMPORTANT: contact_sensor and robot.data use DIFFERENT body orderings.
         # Use contact_sensor.find_bodies() for force lookups (contact_forces tensor).
         # Use robot.find_bodies() for position/velocity lookups (body_pos_w, body_lin_vel_w).
-        cs_feet_idx, _ = self.contact_sensor.find_bodies(".*foot")
-        self.cs_feet_indices = sorted(cs_feet_idx)  # for contact_forces
-        rob_feet_idx, _ = self.robot.find_bodies(".*foot")
-        self.robot_feet_indices = sorted(rob_feet_idx)  # for body_pos_w / body_lin_vel_w
+        foot_order = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
+        cs_feet_idx, cs_feet_names = self.contact_sensor.find_bodies(".*foot")
+        self.cs_feet_indices = self._ordered_body_indices(cs_feet_idx, cs_feet_names, foot_order)  # contact forces
+        rob_feet_idx, rob_feet_names = self.robot.find_bodies(".*foot")
+        self.robot_feet_indices = self._ordered_body_indices(rob_feet_idx, rob_feet_names, foot_order)  # kinematics
         # Alias for backward compat with reward fns that use feet forces
         self.feet_indices = self.cs_feet_indices
 
@@ -198,9 +199,12 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             "dof_pos": self.cfg.rew_dof_pos,
             "feet_air_time": self.cfg.rew_feet_air_time,
         }
-        self.reward_scales = {name: scale * self.step_dt for name, scale in self.reward_scales.items()}
         self.episode_sums = {k: torch.zeros(self.num_envs, device=self.device) for k in self.reward_names}
         self.episode_sums["total"] = torch.zeros(self.num_envs, device=self.device)
+        self.episode_sums["ji22_pos"] = torch.zeros(self.num_envs, device=self.device)
+        self.episode_sums["ji22_neg"] = torch.zeros(self.num_envs, device=self.device)
+        self.episode_sums["ji22_exp_gate"] = torch.zeros(self.num_envs, device=self.device)
+        self.episode_raw_sums = {k: torch.zeros(self.num_envs, device=self.device) for k in self.reward_names}
         self.command_sums = {k: torch.zeros(self.num_envs, device=self.device) for k in self.reward_names}
         self.command_sums["lin_vel_raw"] = torch.zeros(self.num_envs, device=self.device)
         self.command_sums["ang_vel_raw"] = torch.zeros(self.num_envs, device=self.device)
@@ -218,6 +222,16 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         if self.cfg.enable_debug_vis:
             self.set_debug_vis(True)
+
+    @staticmethod
+    def _ordered_body_indices(indices, names, ordered_suffixes: tuple[str, ...]) -> list[int]:
+        result = []
+        for suffix in ordered_suffixes:
+            matches = [idx for idx, name in zip(indices, names) if name.endswith(suffix)]
+            if len(matches) != 1:
+                raise RuntimeError(f"Expected exactly one body ending with {suffix}, got {names}")
+            result.append(int(matches[0]))
+        return result
 
     # ==========================================================================
     # Scene setup
@@ -378,15 +392,6 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self._resample_commands(env_ids)
 
     def _get_observations(self) -> dict:
-        # Update action/vel history at END of step (used by next step's rewards)
-        self.last_last_actions[:] = self.last_actions[:]
-        self.last_actions[:] = self.actions[:]
-        self.last_last_joint_pos_target[:] = self.last_joint_pos_target[:]
-        self.last_joint_pos_target[:] = self.joint_pos_target[:]
-        self.last_dof_vel[:] = self.dof_vel[:]
-        # Update foot velocities for next step's prev_foot_velocities
-        self.foot_velocities = self.robot.data.body_lin_vel_w[:, self.robot_feet_indices, :]
-
         obs = torch.cat(
             [
                 self.projected_gravity,  # 3
@@ -418,6 +423,15 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             ],
             dim=-1,
         )
+
+        # Match IsaacGym WTW timing: emit the current observation/history with
+        # previous-step action buffers, then advance buffers for the next step.
+        self.last_last_actions[:] = self.last_actions[:]
+        self.last_actions[:] = self.actions[:]
+        self.last_last_joint_pos_target[:] = self.last_joint_pos_target[:]
+        self.last_joint_pos_target[:] = self.joint_pos_target[:]
+        self.last_dof_vel[:] = self.dof_vel[:]
+        self.foot_velocities = self.robot.data.body_lin_vel_w[:, self.robot_feet_indices, :]
 
         return {"policy": obs, "obs_history": self.obs_history, "privileged": priv_obs}
 
@@ -519,10 +533,22 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             scale = self.reward_scales[name]
             if scale == 0.0:
                 continue
-            rew = fn() * scale
+            raw_rew = fn()
+            rew = raw_rew * scale
             rew_buf += rew
-            rew_buf_pos += torch.clip(rew, min=0.0)
-            rew_buf_neg += torch.clip(rew, max=0.0)
+            if self.cfg.reward_split_mode == "isaacgym":
+                # Match original WTW: classify each reward term globally, then
+                # add the full per-env term into either the positive or negative bucket.
+                if torch.sum(rew) >= 0:
+                    rew_buf_pos += rew
+                elif torch.sum(rew) <= 0:
+                    rew_buf_neg += rew
+            elif self.cfg.reward_split_mode == "per_env_clip":
+                rew_buf_pos += torch.clip(rew, min=0.0)
+                rew_buf_neg += torch.clip(rew, max=0.0)
+            else:
+                raise ValueError(f"Unknown reward_split_mode: {self.cfg.reward_split_mode}")
+            self.episode_raw_sums[name] += raw_rew
             self.episode_sums[name] += rew
             if name in ("tracking_contacts_shaped_force", "tracking_contacts_shaped_vel"):
                 self.command_sums[name] += scale + rew
@@ -532,7 +558,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         if self.cfg.only_positive_rewards:
             rew_buf = torch.clip(rew_buf, min=0.0)
         elif self.cfg.only_positive_rewards_ji22_style:
-            rew_buf = rew_buf_pos * torch.exp(rew_buf_neg / self.cfg.sigma_rew_neg)
+            exp_gate = torch.exp(rew_buf_neg / self.cfg.sigma_rew_neg)
+            rew_buf = rew_buf_pos * exp_gate
+            self.episode_sums["ji22_exp_gate"] += exp_gate
+        self.episode_sums["ji22_pos"] += rew_buf_pos
+        self.episode_sums["ji22_neg"] += rew_buf_neg
 
         self.episode_sums["total"] += rew_buf
         self.command_sums["lin_vel_raw"] += self.base_lin_vel[:, 0]
@@ -563,7 +593,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
     def _reward_orientation_control(self):
-        rp = self.commands[:, 10:12]  # [roll_cmd, pitch_cmd]
+        rp = self.commands[:, 10:12]  # [pitch_cmd, roll_cmd]
         quat_roll = quat_from_angle_axis(
             -rp[:, 1],
             torch.tensor([1.0, 0.0, 0.0], device=self.device).expand(self.num_envs, -1),
@@ -1178,10 +1208,27 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         for key in self.episode_sums:
             ep_info[f"rew_{key}"] = torch.mean(self.episode_sums[key][env_ids]).item()
             self.episode_sums[key][env_ids] = 0.0
+        for key in self.episode_raw_sums:
+            ep_info[f"raw_rew_{key}"] = torch.mean(self.episode_raw_sums[key][env_ids]).item()
+            self.episode_raw_sums[key][env_ids] = 0.0
 
         # Curriculum stats
         if self.cfg.command_curriculum:
             ep_info["command_area"] = float(np.mean([np.sum(c.weights) / c.weights.shape[0] for c in self.curricula]))
+            for curriculum, category in zip(self.curricula, self.category_names):
+                ep_info[f"command_area_{category}"] = float(np.sum(curriculum.weights) / curriculum.weights.shape[0])
+            ep_info["min_command_height"] = torch.min(self.commands[:, 3]).item()
+            ep_info["max_command_height"] = torch.max(self.commands[:, 3]).item()
+            ep_info["min_command_freq"] = torch.min(self.commands[:, 4]).item()
+            ep_info["max_command_freq"] = torch.max(self.commands[:, 4]).item()
+            ep_info["min_command_phase"] = torch.min(self.commands[:, 5]).item()
+            ep_info["max_command_phase"] = torch.max(self.commands[:, 5]).item()
+            ep_info["min_command_offset"] = torch.min(self.commands[:, 6]).item()
+            ep_info["max_command_offset"] = torch.max(self.commands[:, 6]).item()
+            ep_info["min_command_bound"] = torch.min(self.commands[:, 7]).item()
+            ep_info["max_command_bound"] = torch.max(self.commands[:, 7]).item()
+            ep_info["min_action"] = torch.min(self.actions).item()
+            ep_info["max_action"] = torch.max(self.actions).item()
 
         self.extras["episode"] = ep_info
         self.extras["time_outs"] = self.reset_time_outs
@@ -1310,8 +1357,10 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # --- commanded pose frame: 3 cylinders at commanded height ---
         # CylinderCfg axis="X/Y/Z" bakes the long-axis direction into the prim;
         # cmd_pose_quat rotates the entire frame in world space — no per-axis offset needed.
-        cmd_roll = self.commands[:, 11]
-        cmd_pitch = self.commands[:, 10]
+        # Match _reward_orientation_control(): positive pitch/roll commands are
+        # converted with a negative sign before comparing projected gravity.
+        cmd_roll = -self.commands[:, 11]
+        cmd_pitch = -self.commands[:, 10]
         cmd_pose_quat = quat_from_euler_xyz(cmd_roll, cmd_pitch, cur_yaw)
         target_h = self.commands[:, 3] + self.cfg.base_height_target
         cmd_pose_pos = base_pos.clone()
