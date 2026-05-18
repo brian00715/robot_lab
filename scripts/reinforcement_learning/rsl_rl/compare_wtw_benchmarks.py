@@ -40,6 +40,10 @@ AGG_METRICS = [
     "contact_duty_error_mean",
     "contact_freq_ratio",
     "contact_phase_r_mean",
+    "swing_height_peak_rmse",
+    "foot_height_profile_rmse",
+    "stance_width_rmse",
+    "stance_length_rmse",
 ]
 
 CASE_HEATMAP_METRICS = [
@@ -49,6 +53,8 @@ CASE_HEATMAP_METRICS = [
     "height_score",
     "contact_freq_ratio",
     "contact_duty_error_mean",
+    "swing_height_peak_rmse",
+    "stance_width_rmse",
 ]
 
 GAIT_NAMES = ("trot", "pace", "bound", "pronk")

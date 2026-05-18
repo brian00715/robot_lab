@@ -829,7 +829,13 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # ==========================================================================
 
     def _init_command_distribution(self):
-        self.category_names = ["pronk", "trot", "pace", "bound"]
+        valid_categories = ("pronk", "trot", "pace", "bound")
+        self.category_names = list(self.cfg.gait_categories)
+        if not self.category_names:
+            raise ValueError("Go2 WTW requires at least one gait category.")
+        invalid_categories = [category for category in self.category_names if category not in valid_categories]
+        if invalid_categories:
+            raise ValueError(f"Unknown gait categories {invalid_categories}; valid choices are {valid_categories}.")
 
         kw = dict(
             x_vel=(self.cfg.limit_vel_x[0], self.cfg.limit_vel_x[1], self.cfg.num_bins_vel_x),

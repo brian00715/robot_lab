@@ -39,7 +39,7 @@ parser.add_argument(
     "--suite",
     type=str,
     default="standard",
-    choices=["standard", "gaits", "height", "height_full", "posture"],
+    choices=["standard", "gaits", "height", "height_full", "posture", "trot_params"],
 )
 parser.add_argument("--cases_json", type=str, default=None, help="Optional JSON file overriding the built-in suite.")
 parser.add_argument("--duration_s", type=float, default=6.0, help="Measured duration per case.")
@@ -66,7 +66,7 @@ import robot_lab.tasks  # noqa: F401
 import torch
 from isaaclab.envs import DirectRLEnvCfg
 from isaaclab.utils.assets import retrieve_file_path
-from isaaclab.utils.math import euler_xyz_from_quat
+from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_yaw, quat_conjugate
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -145,6 +145,15 @@ class CaseAccumulator:
         self.contact_phase_sin = torch.zeros(4, device=device)
         self.contact_phase_cos = torch.zeros(4, device=device)
         self.contact_phase_count = torch.zeros(4, device=device)
+        self.swing_height_sum = torch.tensor(0.0, device=device)
+        self.swing_height_sqerr = torch.tensor(0.0, device=device)
+        self.swing_height_samples = torch.tensor(0.0, device=device)
+        self.foot_height_profile_sqerr = torch.tensor(0.0, device=device)
+        self.foot_height_profile_samples = torch.tensor(0.0, device=device)
+        self.stance_width_sum = torch.tensor(0.0, device=device)
+        self.stance_width_sqerr = torch.tensor(0.0, device=device)
+        self.stance_length_sum = torch.tensor(0.0, device=device)
+        self.stance_length_sqerr = torch.tensor(0.0, device=device)
         self.pair_sums = {
             "fl_fr_same": torch.tensor(0.0, device=device),
             "fl_rl_same": torch.tensor(0.0, device=device),
@@ -167,10 +176,14 @@ class CaseAccumulator:
             self.done_count += int(dones.sum().item())
 
         roll, pitch, _ = euler_xyz_from_quat(env.base_quat)
-        raw_contact = torch.norm(env.contact_forces[:, env.feet_indices, :], dim=-1) > contact_threshold
+        if hasattr(env, "contact_force_norms"):
+            raw_contact = env.contact_force_norms[:, env.feet_indices] > contact_threshold
+        else:
+            raw_contact = torch.norm(env.contact_forces[:, env.feet_indices, :], dim=-1) > contact_threshold
         actual_contact = self._debounce_contact(raw_contact)
         desired_contact = env.desired_contact_states > 0.5
         desired_prob = torch.clamp(env.desired_contact_states, 0.0, 1.0)
+        swing_weight = torch.clamp(1.0 - env.desired_contact_states, 0.0, 1.0)
 
         if self.prev_contact is not None:
             self.rising_edges += torch.logical_and(~self.prev_contact, actual_contact).sum(dim=0).float()
@@ -194,6 +207,26 @@ class CaseAccumulator:
         # The environment reward/debug convention targets -command for roll/pitch.
         self._add_sqerr("pitch", pitch, -cmd[10])
         self._add_sqerr("roll", roll, -cmd[11])
+
+        foot_height = env.foot_positions[:, :, 2]
+        phases = 1 - torch.abs(1.0 - torch.clip((env.foot_indices * 2.0) - 1.0, 0.0, 1.0) * 2.0)
+        target_foot_height = cmd[9] * phases + 0.02
+        self.swing_height_sum += (foot_height * swing_weight).sum()
+        self.swing_height_sqerr += (torch.square(foot_height - (cmd[9] + 0.02)) * swing_weight).sum()
+        self.swing_height_samples += swing_weight.sum()
+        self.foot_height_profile_sqerr += (torch.square(foot_height - target_foot_height) * swing_weight).sum()
+        self.foot_height_profile_samples += swing_weight.sum()
+
+        foot_positions_body = torch.zeros_like(env.foot_positions)
+        translated_feet = env.foot_positions - env.base_pos.unsqueeze(1)
+        for i in range(4):
+            foot_positions_body[:, i, :] = quat_apply_yaw(quat_conjugate(env.base_quat), translated_feet[:, i, :])
+        stance_width = 2.0 * torch.mean(torch.abs(foot_positions_body[:, :, 1]), dim=1)
+        stance_length = 2.0 * torch.mean(torch.abs(foot_positions_body[:, :, 0]), dim=1)
+        self.stance_width_sum += stance_width.sum()
+        self.stance_width_sqerr += torch.square(stance_width - cmd[12]).sum()
+        self.stance_length_sum += stance_length.sum()
+        self.stance_length_sqerr += torch.square(stance_length - cmd[13]).sum()
 
         self.contact_duty += actual_contact.float().sum(dim=0)
         self.desired_duty += desired_contact.float().sum(dim=0)
@@ -222,8 +255,12 @@ class CaseAccumulator:
             "cmd_phase": float(self.command[5].item()),
             "cmd_offset": float(self.command[6].item()),
             "cmd_bound": float(self.command[7].item()),
+            "cmd_gait_duration": float(self.command[8].item()),
+            "cmd_swing_height": float(self.command[9].item()),
             "cmd_pitch": float(self.command[10].item()),
             "cmd_roll": float(self.command[11].item()),
+            "cmd_stance_width": float(self.command[12].item()),
+            "cmd_stance_length": float(self.command[13].item()),
         }
         for key, value in self.sum_values.items():
             row[f"{key}_mean"] = float((value / max(1, self.samples)).item())
@@ -261,6 +298,15 @@ class CaseAccumulator:
         cmd_freq = max(1e-6, abs(float(self.command[4].item())))
         row["contact_freq_ratio"] = float(row["contact_freq_mean"] / cmd_freq)
         row["contact_freq_error"] = abs(float(row["contact_freq_ratio"]) - 1.0)
+        swing_samples = torch.clamp(self.swing_height_samples, min=1.0)
+        profile_samples = torch.clamp(self.foot_height_profile_samples, min=1.0)
+        row["swing_height_mean"] = float((self.swing_height_sum / swing_samples).item())
+        row["swing_height_peak_rmse"] = float(torch.sqrt(self.swing_height_sqerr / swing_samples).item())
+        row["foot_height_profile_rmse"] = float(torch.sqrt(self.foot_height_profile_sqerr / profile_samples).item())
+        row["stance_width_mean"] = float((self.stance_width_sum / max(1, self.samples)).item())
+        row["stance_width_rmse"] = float(torch.sqrt(self.stance_width_sqerr / max(1, self.samples)).item())
+        row["stance_length_mean"] = float((self.stance_length_sum / max(1, self.samples)).item())
+        row["stance_length_rmse"] = float(torch.sqrt(self.stance_length_sqerr / max(1, self.samples)).item())
         row["contact_phase_r_mean"] = float(
             sum(float(row[f"contact_phase_r_{foot}"]) for foot in FOOT_NAMES) / len(FOOT_NAMES)
         )
@@ -380,6 +426,19 @@ def _builtin_cases(suite: str) -> list[BenchmarkCase]:
         BenchmarkCase("trot_roll_pos", gait="trot", vx=0.3, roll=0.20),
         BenchmarkCase("trot_roll_neg", gait="trot", vx=0.3, roll=-0.20),
     ]
+    trot_param_cases = [
+        BenchmarkCase("trot_freq_2p0", gait="trot", vx=0.4, freq=2.0),
+        BenchmarkCase("trot_freq_3p0", gait="trot", vx=0.4, freq=3.0),
+        BenchmarkCase("trot_freq_4p0", gait="trot", vx=0.4, freq=4.0),
+        BenchmarkCase("trot_swing_0p05", gait="trot", vx=0.4, swing_height=0.05),
+        BenchmarkCase("trot_swing_0p12", gait="trot", vx=0.4, swing_height=0.12),
+        BenchmarkCase("trot_swing_0p20", gait="trot", vx=0.4, swing_height=0.20),
+        BenchmarkCase("trot_width_0p16", gait="trot", vx=0.4, stance_width=0.16),
+        BenchmarkCase("trot_width_0p28", gait="trot", vx=0.4, stance_width=0.28),
+        BenchmarkCase("trot_width_0p40", gait="trot", vx=0.4, stance_width=0.40),
+        BenchmarkCase("trot_length_0p36", gait="trot", vx=0.4, stance_length=0.36),
+        BenchmarkCase("trot_length_0p45", gait="trot", vx=0.4, stance_length=0.45),
+    ]
     if suite == "gaits":
         return gait_cases
     if suite == "height":
@@ -388,6 +447,8 @@ def _builtin_cases(suite: str) -> list[BenchmarkCase]:
         return height_full_cases
     if suite == "posture":
         return posture_cases
+    if suite == "trot_params":
+        return trot_param_cases
     return gait_cases + height_cases + posture_cases
 
 
@@ -442,18 +503,29 @@ def _write_outputs(rows: list[dict[str, Any]], output_dir: str, metadata: dict[s
         "cmd_vx",
         "vx_mean",
         "vx_rmse",
+        "cmd_freq",
+        "contact_freq_mean",
+        "contact_freq_ratio",
+        "contact_freq_error",
         "cmd_height",
         "height_mean",
         "height_rmse",
+        "cmd_swing_height",
+        "swing_height_mean",
+        "swing_height_peak_rmse",
+        "foot_height_profile_rmse",
+        "cmd_stance_width",
+        "stance_width_mean",
+        "stance_width_rmse",
+        "cmd_stance_length",
+        "stance_length_mean",
+        "stance_length_rmse",
         "cmd_pitch",
         "pitch_mean",
         "pitch_rmse",
         "contact_match_mean",
         "contact_prob_match_mean",
         "contact_duty_error_mean",
-        "contact_freq_mean",
-        "contact_freq_ratio",
-        "contact_freq_error",
     ]
     fieldnames = [key for key in preferred if key in fieldnames] + [key for key in fieldnames if key not in preferred]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -537,6 +609,7 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
             f"[RESULT] {case.name}: overall={row['overall_score']:.3f} track={row['tracking_score']:.3f} "
             f"gait_v2={row['gait_score_v2']:.3f} gait_old={row['gait_score']:.3f} "
             f"freq_ratio={row['contact_freq_ratio']:.2f} duty_err={row['contact_duty_error_mean']:.3f} "
+            f"swing_rmse={row['foot_height_profile_rmse']:.3f} width_rmse={row['stance_width_rmse']:.3f} "
             f"height={row['height_score']:.3f} done_rate={row['done_rate']:.4f}"
         )
     print(f"[INFO] Completed benchmark in {time.time() - st:.2f} seconds.")
