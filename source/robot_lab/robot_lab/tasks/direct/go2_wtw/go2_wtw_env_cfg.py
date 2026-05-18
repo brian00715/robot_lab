@@ -11,7 +11,8 @@ from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 
-from robot_lab.assets.unitree import UNITREE_GO2_CFG
+# from robot_lab.assets.unitree import UNITREE_GO2_CFG
+from isaaclab_assets.robots.unitree import UNITREE_GO2_CFG
 
 
 @configclass

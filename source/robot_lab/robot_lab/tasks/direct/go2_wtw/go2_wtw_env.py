@@ -292,10 +292,14 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # Refresh physics state first
         self._refresh_reward_state()
 
+        # Match IsaacGym WTW callback ordering: resample commands first, then
+        # compute clock/contact targets from the current command.
+        self._resample_commands_if_due()
+
         # Advance gait clock and compute desired_contact_states
         self._step_contact_targets()
 
-        # Periodic updates (command resample, DR, push)
+        # Periodic updates (DR, push)
         self._periodic_updates()
 
         # Contact-based termination (base body)
@@ -390,6 +394,9 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             buf[env_ids] = 0.0
 
         self._resample_commands(env_ids)
+        # Keep reset observations consistent with the newly sampled command
+        # without advancing phase by one control step.
+        self._step_contact_targets(advance=False)
 
     def _get_observations(self) -> dict:
         obs = torch.cat(
@@ -439,15 +446,18 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # Periodic in-episode updates
     # ==========================================================================
 
-    def _periodic_updates(self):
-        """Handle mid-episode command resampling, DR, and robot pushes."""
+    def _resample_commands_if_due(self):
+        """Handle mid-episode command resampling before gait target updates."""
         step_dt = self.step_dt
 
-        # Command resampling
         sample_interval = max(1, round(self.cfg.resampling_time / step_dt))
         resample_ids = (self.episode_length_buf % sample_interval == 0).nonzero(as_tuple=False).flatten()
         if len(resample_ids) > 0:
             self._resample_commands(resample_ids)
+
+    def _periodic_updates(self):
+        """Handle mid-episode DR and robot pushes."""
+        step_dt = self.step_dt
 
         # Gravity randomization (per sim-step counter)
         gravity_interval = max(1, round(self.cfg.gravity_rand_interval_s / step_dt))
@@ -757,7 +767,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # Gait clock
     # ==========================================================================
 
-    def _step_contact_targets(self):
+    def _step_contact_targets(self, advance: bool = True):
         """Advance gait clock and compute desired_contact_states and clock_inputs."""
         if not self.cfg.observe_gait_commands:
             return
@@ -768,7 +778,8 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         bounds = self.commands[:, 7]
         durations = self.commands[:, 8]
 
-        self.gait_indices = torch.remainder(self.gait_indices + self.step_dt * frequencies, 1.0)
+        if advance:
+            self.gait_indices = torch.remainder(self.gait_indices + self.step_dt * frequencies, 1.0)
 
         # Raw foot phase indices (FL/FR/RL/RR)
         fi0 = self.gait_indices + phases + offsets + bounds
