@@ -45,9 +45,6 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
     cfg: Go2WalkTheseWaysEnvCfg
 
-    # hip joints (0,3,6,9) get hip_scale_reduction applied in go2_config
-    HIP_JOINT_INDICES = [0, 3, 6, 9]
-
     def __init__(self, cfg: Go2WalkTheseWaysEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
 
@@ -55,11 +52,26 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # IMPORTANT: contact_sensor and robot.data use DIFFERENT body orderings.
         # Use contact_sensor.find_bodies() for force lookups (contact_forces tensor).
         # Use robot.find_bodies() for position/velocity lookups (body_pos_w, body_lin_vel_w).
-        foot_order = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
-        cs_feet_idx, cs_feet_names = self.contact_sensor.find_bodies(".*foot")
-        self.cs_feet_indices = self._ordered_body_indices(cs_feet_idx, cs_feet_names, foot_order)  # contact forces
-        rob_feet_idx, rob_feet_names = self.robot.find_bodies(".*foot")
-        self.robot_feet_indices = self._ordered_body_indices(rob_feet_idx, rob_feet_names, foot_order)  # kinematics
+        self.joint_indices, self.joint_names = self.robot.find_joints(list(self.cfg.joint_names), preserve_order=True)
+        if len(self.joint_indices) != self.cfg.action_space:
+            raise RuntimeError(
+                f"Expected {self.cfg.action_space} controlled joints, got {len(self.joint_indices)}: {self.joint_names}"
+            )
+        self.hip_joint_indices = [i for i, name in enumerate(self.joint_names) if name.endswith("_hip_joint")]
+        if len(self.hip_joint_indices) != 4:
+            raise RuntimeError(f"Expected four hip joints in controlled joint order, got {self.joint_names}")
+        self._joint_index_to_order = {int(joint_id): order for order, joint_id in enumerate(self.joint_indices)}
+
+        foot_order = tuple(self.cfg.foot_names)
+        cs_feet_idx, cs_feet_names = self.contact_sensor.find_bodies(list(foot_order), preserve_order=True)
+        self.cs_feet_indices = [int(idx) for idx in cs_feet_idx]  # contact forces
+        rob_feet_idx, rob_feet_names = self.robot.find_bodies(list(foot_order), preserve_order=True)
+        self.robot_feet_indices = [int(idx) for idx in rob_feet_idx]  # kinematics
+        if tuple(cs_feet_names) != foot_order or tuple(rob_feet_names) != foot_order:
+            raise RuntimeError(
+                "Foot order resolution mismatch: "
+                f"contact={cs_feet_names}, robot={rob_feet_names}, expected={foot_order}"
+            )
         # Alias for backward compat with reward fns that use feet forces
         self.feet_indices = self.cs_feet_indices
 
@@ -71,10 +83,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.robot_base_index = int(base_idx[0])
 
         # ---- dof limits (soft, already factored by soft_joint_pos_limit_factor) -----
-        self.dof_pos_limits = self.robot.data.soft_joint_pos_limits[0]  # [12, 2]
+        self.dof_pos_limits = self.robot.data.soft_joint_pos_limits[0, self.joint_indices]  # [12, 2]
 
         # ---- default joint positions -----------------------------------------
-        self.default_dof_pos = self.robot.data.default_joint_pos[0].clone()  # [12]
+        self.default_dof_pos = self.robot.data.default_joint_pos[0, self.joint_indices].clone()  # [12]
+        self._cache_default_actuator_props()
 
         # ---- gravity vector --------------------------------------------------
         self.gravity_vec = torch.tensor([0.0, 0.0, -1.0], device=self.device).unsqueeze(0).repeat(self.num_envs, 1)
@@ -116,6 +129,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.dof_vel = torch.zeros_like(self.dof_pos)
         self.torques = torch.zeros_like(self.dof_pos)
         self.contact_forces = torch.zeros(self.num_envs, self.robot.num_bodies, 3, device=self.device)
+        self.contact_force_norms = torch.zeros(self.num_envs, self.robot.num_bodies, device=self.device)
         self.foot_positions = torch.zeros(self.num_envs, 4, 3, device=self.device)
 
         # ---- domain randomization buffers ------------------------------------
@@ -223,16 +237,6 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         if self.cfg.enable_debug_vis:
             self.set_debug_vis(True)
 
-    @staticmethod
-    def _ordered_body_indices(indices, names, ordered_suffixes: tuple[str, ...]) -> list[int]:
-        result = []
-        for suffix in ordered_suffixes:
-            matches = [idx for idx, name in zip(indices, names) if name.endswith(suffix)]
-            if len(matches) != 1:
-                raise RuntimeError(f"Expected exactly one body ending with {suffix}, got {names}")
-            result.append(int(matches[0]))
-        return result
-
     # ==========================================================================
     # Scene setup
     # ==========================================================================
@@ -250,7 +254,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # Contact sensor for ALL robot bodies (needed for feet + termination + collision)
         contact_sensor_cfg = ContactSensorCfg(
             prim_path="/World/envs/env_.*/Robot/.*",
-            history_length=2,
+            history_length=3,
             update_period=0.0,
             track_air_time=True,
         )
@@ -273,9 +277,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     def _apply_action(self):
         # Scale actions; hip joints get additional reduction
         actions_scaled = self.actions * self.cfg.action_scale
-        actions_scaled[:, self.HIP_JOINT_INDICES] *= self.cfg.hip_scale_reduction
-        # Motor strength DR: scales effective torque by scaling the position offset
-        actions_scaled = actions_scaled * self.motor_strengths
+        actions_scaled[:, self.hip_joint_indices] *= self.cfg.hip_scale_reduction
 
         # Lag buffer simulation
         if self.cfg.randomize_lag_timesteps:
@@ -286,7 +288,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         # Motor offset (simulates calibration error)
         target = self.joint_pos_target + self.motor_offsets
-        self.robot.set_joint_position_target(target)
+        self.robot.set_joint_position_target(target, joint_ids=self.joint_indices)
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         # Refresh physics state first
@@ -304,7 +306,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
         # Contact-based termination (base body)
         base_contact = torch.any(
-            torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1.0,
+            self.contact_force_norms[:, self.termination_contact_indices] > self.cfg.contact_threshold,
             dim=1,
         )
 
@@ -347,11 +349,11 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self._randomize_dof_props(env_ids)
 
         # Reset joint states with random scaling [0.5, 1.5]
-        joint_pos = self.robot.data.default_joint_pos[env_ids] * torch.empty(
+        joint_pos = self.robot.data.default_joint_pos[env_ids][:, self.joint_indices] * torch.empty(
             len(env_ids), self.cfg.action_space, device=self.device
         ).uniform_(0.5, 1.5)
         joint_vel = torch.zeros_like(joint_pos)
-        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+        self.robot.write_joint_state_to_sim(joint_pos, joint_vel, self.joint_indices, env_ids)
 
         # Reset root state
         root_state = self.robot.data.default_root_state[env_ids].clone()
@@ -397,6 +399,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         # Keep reset observations consistent with the newly sampled command
         # without advancing phase by one control step.
         self._step_contact_targets(advance=False)
+        self._refresh_reward_state()
 
     def _get_observations(self) -> dict:
         obs = torch.cat(
@@ -495,12 +498,13 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.projected_gravity = self.robot.data.projected_gravity_b
         self.base_pos = self.robot.data.root_pos_w
         self.base_quat = self.robot.data.root_quat_w
-        self.dof_pos = self.robot.data.joint_pos
-        self.dof_vel = self.robot.data.joint_vel
+        self.dof_pos = self.robot.data.joint_pos[:, self.joint_indices]
+        self.dof_vel = self.robot.data.joint_vel[:, self.joint_indices]
         self.contact_forces = self.contact_sensor.data.net_forces_w  # [N, n_body, 3]
+        self.contact_force_norms = torch.max(torch.norm(self.contact_sensor.data.net_forces_w_history, dim=-1), dim=1)[0]
         self.foot_positions = self.robot.data.body_pos_w[:, self.robot_feet_indices, :]  # [N, 4, 3]
         self.foot_velocities = self.robot.data.body_lin_vel_w[:, self.robot_feet_indices, :]  # [N, 4, 3]
-        self.torques = self.robot.data.applied_torque[:, : self.cfg.action_space]
+        self.torques = self.robot.data.applied_torque[:, self.joint_indices]
 
     # ==========================================================================
     # Reward computation (CoRL reward functions from corl_rewards.py)
@@ -641,7 +645,9 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
     def _reward_collision(self):
         return torch.sum(
-            (torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1).float(),
+            (
+                self.contact_force_norms[:, self.penalised_contact_indices] > self.cfg.collision_contact_threshold
+            ).float(),
             dim=1,
         )
 
@@ -655,7 +661,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         return -torch.square(self.base_pos[:, 2] - jump_target)
 
     def _reward_tracking_contacts_shaped_force(self):
-        foot_forces = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1)  # [N, 4]
+        foot_forces = self.contact_force_norms[:, self.feet_indices]  # [N, 4]
         desired = self.desired_contact_states
         rew = torch.zeros(self.num_envs, device=self.device)
         for i in range(4):
@@ -678,7 +684,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         return torch.sum(rew, dim=1)
 
     def _reward_feet_slip(self):
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
+        contact = self.contact_force_norms[:, self.feet_indices] > self.cfg.contact_threshold
         contact_filt = torch.logical_or(contact, self.last_contacts)
         self.last_contacts = contact
         foot_vels_sq = torch.square(torch.norm(self.foot_velocities[:, :, 0:2], dim=2))
@@ -686,7 +692,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
     def _reward_feet_impact_vel(self):
         prev_fvz = self.prev_foot_velocities[:, :, 2]
-        contact = torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) > 1.0
+        contact = self.contact_force_norms[:, self.feet_indices] > self.cfg.contact_threshold
         rew = contact.float() * torch.square(torch.clip(prev_fvz, -100.0, 0.0))
         return torch.sum(rew, dim=1)
 
@@ -742,9 +748,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
 
     def _reward_feet_contact_forces(self):
         return torch.sum(
-            (torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) - self.cfg.max_contact_force).clip(
-                min=0.0
-            ),
+            (self.contact_force_norms[:, self.feet_indices] - self.cfg.max_contact_force).clip(min=0.0),
             dim=1,
         )
 
@@ -755,7 +759,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         return torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
 
     def _reward_feet_air_time(self):
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.0
+        contact = self.contact_force_norms[:, self.feet_indices] > self.cfg.contact_threshold
         first_contact = (self.feet_air_time > 0) * contact
         self.feet_air_time += self.step_dt
         self.feet_air_time *= (~contact).float()
@@ -1027,22 +1031,45 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
     # Domain randomization
     # ==========================================================================
 
+    def _cache_default_actuator_props(self):
+        self.default_actuator_effort_limits = {}
+        self.default_actuator_stiffness = {}
+        self.default_actuator_damping = {}
+        self.default_joint_effort_limits = self.robot.data.joint_effort_limits[:, self.joint_indices].clone()
+        for name, actuator in self.robot.actuators.items():
+            self.default_actuator_effort_limits[name] = actuator.effort_limit.clone()
+            self.default_actuator_stiffness[name] = actuator.stiffness.clone()
+            self.default_actuator_damping[name] = actuator.damping.clone()
+
+    def _raise_or_warn_dr(self, message: str, exc: Exception | None = None):
+        if self.cfg.strict_dr_writes:
+            if exc is None:
+                raise RuntimeError(message)
+            raise RuntimeError(message) from exc
+        print(f"[Go2WTW DR warning] {message}")
+
     def _cache_default_rigid_body_props(self):
         self.default_base_mass = None
         self.default_base_com = None
         view = getattr(self.robot, "root_physx_view", None)
         if view is None:
+            if self.cfg.randomize_base_mass or self.cfg.randomize_com_displacement:
+                self._raise_or_warn_dr("root_physx_view is unavailable; rigid-body DR cannot be applied.")
             return
         try:
             masses = view.get_masses()
             self.default_base_mass = masses[:, self.robot_base_index].clone()
-        except Exception:
+        except Exception as exc:
             self.default_base_mass = None
+            if self.cfg.randomize_base_mass:
+                self._raise_or_warn_dr("Failed to cache default base mass for DR.", exc)
         try:
             coms = view.get_coms()
             self.default_base_com = coms[:, self.robot_base_index].clone()
-        except Exception:
+        except Exception as exc:
             self.default_base_com = None
+            if self.cfg.randomize_com_displacement:
+                self._raise_or_warn_dr("Failed to cache default base COM for DR.", exc)
 
     def _randomize_rigid_body_props(self, env_ids: torch.Tensor):
         if self.cfg.randomize_base_mass:
@@ -1065,40 +1092,49 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         """Push randomized base mass and COM to PhysX when tensor views are available."""
         view = getattr(self.robot, "root_physx_view", None)
         if view is None:
+            if self.cfg.randomize_base_mass or self.cfg.randomize_com_displacement:
+                self._raise_or_warn_dr("root_physx_view is unavailable; rigid-body DR was sampled but not applied.")
             return
         env_ids_cpu = env_ids.cpu()
         if self.default_base_mass is not None:
             try:
                 masses = view.get_masses()
-                masses[env_ids, self.robot_base_index] = self.default_base_mass[env_ids] + self.payloads[env_ids]
+                masses[env_ids_cpu, self.robot_base_index] = (
+                    self.default_base_mass[env_ids_cpu].detach().cpu() + self.payloads[env_ids].detach().cpu()
+                )
                 view.set_masses(masses, env_ids_cpu)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._raise_or_warn_dr("Failed to apply randomized base mass to PhysX.", exc)
         if self.default_base_com is not None:
             try:
                 coms = view.get_coms()
-                coms[env_ids, self.robot_base_index] = self.default_base_com[env_ids]
-                coms[env_ids, self.robot_base_index, :3] += self.com_displacements[env_ids]
+                coms[env_ids_cpu, self.robot_base_index] = self.default_base_com[env_ids_cpu].detach().cpu()
+                coms[env_ids_cpu, self.robot_base_index, :3] += self.com_displacements[env_ids].detach().cpu()
                 view.set_coms(coms, env_ids_cpu)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._raise_or_warn_dr("Failed to apply randomized base COM to PhysX.", exc)
 
     def _refresh_actor_material_props(self, env_ids: torch.Tensor):
         """Push randomized friction/restitution to simulation."""
         if not hasattr(self.robot, "root_physx_view"):
+            if self.cfg.randomize_friction or self.cfg.randomize_restitution:
+                self._raise_or_warn_dr("root_physx_view is unavailable; material DR was sampled but not applied.")
             return
         try:
+            env_ids_cpu = env_ids.cpu()
             # props: [num_envs, n_shapes, 3]  cols: static_friction, dynamic_friction, restitution
             # Must pass full tensor and env_ids; API indexes into it at env_ids rows
             props = self.robot.root_physx_view.get_material_properties()
             if props is None:
+                if self.cfg.randomize_friction or self.cfg.randomize_restitution:
+                    self._raise_or_warn_dr("Material property tensor is unavailable; material DR was not applied.")
                 return
-            props[env_ids, :, 0] = self.friction_coeffs[env_ids, 0:1]
-            props[env_ids, :, 1] = self.friction_coeffs[env_ids, 0:1]
-            props[env_ids, :, 2] = self.restitutions[env_ids, 0:1]
-            self.robot.root_physx_view.set_material_properties(props, env_ids.cpu())
-        except Exception:
-            pass  # material props API not always available
+            props[env_ids_cpu, :, 0] = self.friction_coeffs[env_ids, 0:1].detach().cpu()
+            props[env_ids_cpu, :, 1] = self.friction_coeffs[env_ids, 0:1].detach().cpu()
+            props[env_ids_cpu, :, 2] = self.restitutions[env_ids, 0:1].detach().cpu()
+            self.robot.root_physx_view.set_material_properties(props, env_ids_cpu)
+        except Exception as exc:
+            self._raise_or_warn_dr("Failed to apply randomized material properties to PhysX.", exc)
 
     def _randomize_dof_props(self, env_ids: torch.Tensor):
         n = len(env_ids)
@@ -1123,6 +1159,53 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             self.Kd_factors[env_ids] = (
                 torch.empty(n, 1, device=self.device).uniform_(lo, hi).repeat(1, self.cfg.action_space)
             )
+        self._apply_actuator_randomization(env_ids)
+
+    def _actuator_joint_ids(self, actuator) -> torch.Tensor:
+        if isinstance(actuator.joint_indices, slice):
+            return torch.arange(self.robot.num_joints, device=self.device)[actuator.joint_indices]
+        return torch.as_tensor(actuator.joint_indices, dtype=torch.long, device=self.device)
+
+    def _apply_actuator_randomization(self, env_ids: torch.Tensor):
+        if len(env_ids) == 0:
+            return
+
+        for name, actuator in self.robot.actuators.items():
+            actuator_joint_ids = self._actuator_joint_ids(actuator)
+            actuator_cols = []
+            ordered_cols = []
+            for col, joint_id in enumerate(actuator_joint_ids.tolist()):
+                order = self._joint_index_to_order.get(int(joint_id))
+                if order is not None:
+                    actuator_cols.append(col)
+                    ordered_cols.append(order)
+            if not actuator_cols:
+                continue
+            actuator_cols_t = torch.tensor(actuator_cols, dtype=torch.long, device=self.device)
+            ordered_cols_t = torch.tensor(ordered_cols, dtype=torch.long, device=self.device)
+
+            effort_limit = self.default_actuator_effort_limits[name][env_ids].clone()
+            effort_limit[:, actuator_cols_t] *= self.motor_strengths[env_ids][:, ordered_cols_t]
+            actuator.effort_limit[env_ids] = effort_limit
+            if hasattr(actuator, "_vel_at_effort_lim") and hasattr(actuator, "_saturation_effort"):
+                actuator._vel_at_effort_lim = actuator.velocity_limit * (
+                    1 + actuator.effort_limit / actuator._saturation_effort
+                )
+            self.robot.write_joint_effort_limit_to_sim(
+                self.default_joint_effort_limits[env_ids] * self.motor_strengths[env_ids],
+                joint_ids=self.joint_indices,
+                env_ids=env_ids,
+            )
+
+            stiffness = self.default_actuator_stiffness[name][env_ids].clone()
+            damping = self.default_actuator_damping[name][env_ids].clone()
+            stiffness[:, actuator_cols_t] *= self.Kp_factors[env_ids][:, ordered_cols_t]
+            damping[:, actuator_cols_t] *= self.Kd_factors[env_ids][:, ordered_cols_t]
+            actuator.stiffness[env_ids] = stiffness
+            actuator.damping[env_ids] = damping
+            if actuator.is_implicit_model:
+                self.robot.write_joint_stiffness_to_sim(stiffness, joint_ids=actuator.joint_indices, env_ids=env_ids)
+                self.robot.write_joint_damping_to_sim(damping, joint_ids=actuator.joint_indices, env_ids=env_ids)
 
     def _randomize_gravity(self, external_force: torch.Tensor | None = None):
         if external_force is not None:
@@ -1148,8 +1231,8 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
                     Gf.Vec3f(*gravity_dir.tolist())
                 )
                 physics_scene.CreateGravityMagnitudeAttr(gravity_mag).Set(gravity_mag)
-        except Exception:
-            pass
+        except Exception as exc:
+            self._raise_or_warn_dr("Failed to apply randomized gravity to the PhysX scene.", exc)
         # Update gravity_vec for orientation reward.
         self.gravity_vec[:] = (g / g.norm()).unsqueeze(0)
 

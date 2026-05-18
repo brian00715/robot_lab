@@ -146,6 +146,21 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     # ------------ control -----------------------------------------------------------
     action_scale: float = 0.25
     hip_scale_reduction: float = 0.5
+    joint_names: tuple[str, ...] = (
+        "FR_hip_joint",
+        "FR_thigh_joint",
+        "FR_calf_joint",
+        "FL_hip_joint",
+        "FL_thigh_joint",
+        "FL_calf_joint",
+        "RR_hip_joint",
+        "RR_thigh_joint",
+        "RR_calf_joint",
+        "RL_hip_joint",
+        "RL_thigh_joint",
+        "RL_calf_joint",
+    )
+    foot_names: tuple[str, ...] = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
 
     # ------------ visualization -----------------------------------------------------
     enable_debug_vis: bool = False  # set True to enable command/vel/pose markers at env startup
@@ -213,6 +228,8 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
 
     # Contact force penalty threshold
     max_contact_force: float = 500.0
+    contact_threshold: float = 1.0
+    collision_contact_threshold: float = 0.1
 
     # Terminal conditions
     use_terminal_body_height: bool = True
@@ -277,6 +294,7 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     randomize_lag_timesteps: bool = True
     lag_timesteps: int = 6
     randomize_rigids_after_start: bool = False
+    strict_dr_writes: bool = True
 
     # ------------ init state -------------------------------------------------------
     init_pos_z: float = 0.34
