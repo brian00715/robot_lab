@@ -86,8 +86,11 @@ class VisualWholeBodyAction(ActionTerm):
         self._ee_goal_command_name = cfg.ee_goal_command_name
         self._ee_command = None
         self._ik_damping = float(cfg.ik_damping)
+        self._ik_delta_clamp = float(cfg.ik_delta_clamp)
         self._clip_action = float(cfg.clip_actions)
         self._delay_switch_steps = int(cfg.delay_curriculum_switch_steps)
+
+        self._arm_warmup_steps = int(cfg.arm_warmup_steps)
 
         self._raw_actions = torch.zeros(env.num_envs, self.action_dim, device=env.device)
         self._processed_actions = self._asset.data.default_joint_pos.clone()
@@ -155,7 +158,13 @@ class VisualWholeBodyAction(ActionTerm):
         self._dog_target_buf[:] = dog_targets
 
         # Arm IK targets from env-driven EE goal
-        arm_targets = self._compute_arm_targets()
+        # During warmup, hold arm at current joint positions (no IK motion).
+        # This lets the dog learn to stand before the arm begins moving.
+        global_steps_arm = int(getattr(self._env, "common_step_counter", 0))
+        if global_steps_arm < self._arm_warmup_steps:
+            arm_targets = self._asset.data.joint_pos[:, self._arm_joint_ids].clone()
+        else:
+            arm_targets = self._compute_arm_targets()
 
         # Build full target vector
         full_targets = self._asset.data.default_joint_pos.clone()
@@ -193,7 +202,9 @@ class VisualWholeBodyAction(ActionTerm):
         A = jacobian @ jt + damp.unsqueeze(0)
         delta_q = jt @ torch.linalg.solve(A, delta_pose)  # (N, 6, 1)
         delta_q = delta_q.squeeze(-1)
-        # No per-step ±0.25 clamp — matches manip_loco._control_ik (no clamp).
+        # Clamp per-step delta to prevent large arm swings that destabilise the
+        # light GO2 base (B1 was 4x heavier and tolerated unclamped IK).
+        delta_q = delta_q.clamp(-self._ik_delta_clamp, self._ik_delta_clamp)
 
         arm_pos = self._asset.data.joint_pos[:, self._arm_joint_ids]
         arm_targets = arm_pos + delta_q
@@ -267,6 +278,13 @@ class VisualWholeBodyActionCfg(ActionTermCfg):
     scale: float | dict[str, float] = None  # set in __post_init__ of env
 
     ik_damping: float = 0.05
+    # Max arm joint change per policy step (rad).  B1 could tolerate unclamped
+    # IK because it is ~4x heavier than GO2; the clamp prevents the arm from
+    # jolting the light base on the first step of every episode.
+    ik_delta_clamp: float = 0.05
+    # Global env steps before arm IK activates.  Set to a non-zero value to
+    # let the dog policy learn to stand before the arm begins moving.
+    arm_warmup_steps: int = 0
     clip_actions: float = 100.0
 
     # Action delay buffer length (3 in VWBC: action_history_buf carries 5 = 3+2 slots).

@@ -248,6 +248,22 @@ def work_leg(
     return torch.abs(torch.sum(p, dim=-1))
 
 
+def dof_vel_leg(
+    env: ManagerBasedRLEnv,
+    dog_joint_pattern: str = "(FL|FR|RL|RR)_(hip|thigh|calf)_joint",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """``sum(qdot^2)`` over leg joints.
+
+    Penalises high joint velocities to suppress rapid/nervous stepping.
+    Complements action_rate (which penalises *changes* in commands) by
+    directly penalising the resulting joint motion.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    dog_idx = _resolve_dog_joint_ids(asset, dog_joint_pattern)
+    return torch.sum(torch.square(asset.data.joint_vel[:, dog_idx]), dim=-1)
+
+
 # ---------------------------------------------------------------------------
 # Stand still / walking-conditioned terms
 # ---------------------------------------------------------------------------
@@ -298,6 +314,49 @@ def walking_dof_exp(
 def alive(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Constant 1.0 — mlr.py:201-202."""
     return torch.ones(env.num_envs, device=env.device)
+
+
+def base_height_exp(
+    env: ManagerBasedRLEnv,
+    target_height: float = 0.33,
+    sigma: float = 0.05,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Gaussian reward for being at target height.
+
+    Returns exp(-((z - target) / sigma)^2), which is 1.0 at the target and
+    decays smoothly.  Unlike the L1 *penalty* (base_height_l1), this is a
+    *positive* reward that provides a strong gradient toward the correct
+    standing height and is zero-safe at episode start.
+
+    sigma=0.05 m → reward > 0.5 within ±3.4 cm of target.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    h_err = asset.data.root_pos_w[:, 2] - target_height
+    return torch.exp(-(h_err / sigma) ** 2)
+
+
+def upright_bonus(
+    env: ManagerBasedRLEnv,
+    roll_threshold: float = 0.2,
+    pitch_threshold: float = 0.2,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Binary bonus when the robot is approximately upright.
+
+    Returns 1.0 when |roll| < roll_threshold AND |pitch| < pitch_threshold,
+    else 0.0.  Provides a clear "standing upright" signal independent of
+    forward velocity, complementing tracking_lin_vel_max which is zero when
+    the command is zero.
+
+    Default thresholds ±0.2 rad (≈11°) require the body to be roughly level.
+    """
+    from isaaclab.utils.math import euler_xyz_from_quat
+    asset: Articulation = env.scene[asset_cfg.name]
+    roll, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
+    roll = torch.atan2(torch.sin(roll), torch.cos(roll))
+    pitch = torch.atan2(torch.sin(pitch), torch.cos(pitch))
+    return ((torch.abs(roll) < roll_threshold) & (torch.abs(pitch) < pitch_threshold)).float()
 
 
 # ---------------------------------------------------------------------------
@@ -446,6 +505,103 @@ def tracking_ee_world(
     return torch.exp(-err / sigma * 2.0)
 
 
+# ---------------------------------------------------------------------------
+# H2: FPG-style IK feasibility reward (geometric prior)
+# ---------------------------------------------------------------------------
+
+
+def ik_feasibility_dls(
+    env: ManagerBasedRLEnv,
+    ee_goal_command_name: str = "ee_goal",
+    ee_body_name: str = "ee",
+    arm_joint_pattern: str = "joint[1-6]",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    ik_damping: float = 0.05,
+    sigma_q: float = 0.35,
+    residual_tol: float = 0.08,
+    pos_tol: float = 0.20,
+) -> torch.Tensor:
+    """FPG-style IK feasibility reward (H2 geometric prior).
+
+    Uses the same DLS Jacobian IK already running in ``VisualWholeBodyAction``
+    to measure how close the current arm configuration is to the IK solution
+    for the commanded EE goal.  Returns:
+
+    .. math::
+
+        r = \\exp\\!\\left(-\\frac{\\|\\Delta q_{norm}\\|_2^2}{\\sigma_q^2}\\right)
+            \\quad \\text{if solvable, else } 0
+
+    where ``delta_q_norm`` is the DLS joint increment normalised by each
+    joint's soft range.  The "solvable" gate fires when the linearisation
+    residual is below ``residual_tol`` **and** the position error is within
+    ``pos_tol``.  Both thresholds are intentionally generous so the reward is
+    not too sparse early in training.
+    """
+    import re
+    from isaaclab.utils.math import compute_pose_error
+
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    # --- one-time index caching (avoids per-step string search) -----------
+    if not hasattr(env, "_h2_arm_joint_ids"):
+        env._h2_arm_joint_ids = [
+            i for i, n in enumerate(asset.joint_names) if re.fullmatch(arm_joint_pattern, n)
+        ]
+    if not hasattr(env, "_h2_ee_body_id"):
+        env._h2_ee_body_id = asset.body_names.index(ee_body_name)
+
+    arm_ids = env._h2_arm_joint_ids
+    ee_id = env._h2_ee_body_id
+
+    # --- current EE pose --------------------------------------------------
+    ee_pos_w = asset.data.body_pos_w[:, ee_id, :]
+    ee_quat_w = asset.data.body_quat_w[:, ee_id, :]
+    ee_quat_w = ee_quat_w / (ee_quat_w.norm(dim=-1, keepdim=True) + 1e-8)
+
+    # --- desired EE pose from command term --------------------------------
+    cmd = env.command_manager.get_term(ee_goal_command_name)
+    p_des = cmd.curr_ee_goal_cart_world
+    q_des = cmd.ee_goal_orn_quat
+
+    # --- pose error -------------------------------------------------------
+    pos_err, rot_err = compute_pose_error(
+        ee_pos_w, ee_quat_w, p_des, q_des, rot_error_type="axis_angle"
+    )
+    delta_x = torch.cat([pos_err, rot_err], dim=-1)  # (N, 6)
+
+    # --- Jacobian (same extraction logic as VisualWholeBodyAction) --------
+    jacobians = asset.root_physx_view.get_jacobians()
+    body_index = ee_id
+    if jacobians.shape[1] == len(asset.body_names) - 1:
+        body_index -= 1
+    dof_offset = 6 if jacobians.shape[-1] == asset.num_joints + 6 else 0
+    arm_cols = torch.as_tensor(arm_ids, device=env.device, dtype=torch.long) + dof_offset
+    J = jacobians[:, body_index, :6, :].index_select(-1, arm_cols)  # (N, 6, 6)
+
+    # --- DLS solve --------------------------------------------------------
+    Jt = J.transpose(1, 2)
+    damp = (ik_damping ** 2) * torch.eye(6, device=env.device).unsqueeze(0)
+    A = J @ Jt + damp
+    delta_q = (Jt @ torch.linalg.solve(A, delta_x.unsqueeze(-1))).squeeze(-1)  # (N, 6)
+
+    # --- normalise by joint soft range ------------------------------------
+    joint_limits = asset.data.soft_joint_pos_limits[:, arm_ids, :]  # (N, 6, 2)
+    joint_range = joint_limits[..., 1] - joint_limits[..., 0]       # (N, 6)
+    dq_norm = delta_q / (joint_range + 1e-6)                        # (N, 6)
+
+    # --- solvability gate -------------------------------------------------
+    lin_res = torch.norm(
+        (J @ delta_q.unsqueeze(-1)).squeeze(-1) - delta_x, dim=-1
+    )  # (N,)
+    pos_norm = torch.norm(pos_err, dim=-1)  # (N,)
+    solvable = (lin_res <= residual_tol) & (pos_norm <= pos_tol)
+
+    # --- feasibility score ------------------------------------------------
+    f = torch.exp(-torch.sum(dq_norm ** 2, dim=-1) / (sigma_q ** 2))
+    return torch.where(solvable, f, torch.zeros_like(f))
+
+
 __all__ = [
     "tracking_lin_vel_max",
     "tracking_ang_vel_yaw",
@@ -453,6 +609,8 @@ __all__ = [
     "ang_vel_xy_square",
     "roll_abs",
     "base_height_l1",
+    "base_height_exp",
+    "upright_bonus",
     "torques_l2_full",
     "dof_acc_leg",
     "delta_torques_leg",
@@ -460,6 +618,7 @@ __all__ = [
     "dof_pos_limits_leg",
     "hip_pos_l2",
     "work_leg",
+    "dof_vel_leg",
     "stand_still_exp",
     "walking_dof_exp",
     "alive",
@@ -470,4 +629,5 @@ __all__ = [
     "feet_air_time",
     "feet_height_l2",
     "tracking_ee_world",
+    "ik_feasibility_dls",
 ]

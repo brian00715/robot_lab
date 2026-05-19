@@ -323,7 +323,16 @@ def vwbc_full_observation(
     return obs
 
 
-def _resolve_joint_indices(asset: Articulation, pattern: str) -> list[int]:
+def _resolve_joint_indices(asset: Articulation, pattern) -> list[int]:
+    """Resolve joint indices.
+
+    If *pattern* is a list/tuple of joint names, indices are returned in that
+    explicit order (preserving the requested ordering).  If it is a regex
+    string, indices are returned in simulator-natural order.
+    """
+    if isinstance(pattern, (list, tuple)):
+        name_to_idx = {n: i for i, n in enumerate(asset.joint_names)}
+        return [name_to_idx[n] for n in pattern if n in name_to_idx]
     import re as _re
     return [i for i, n in enumerate(asset.joint_names) if _re.fullmatch(pattern, n)]
 

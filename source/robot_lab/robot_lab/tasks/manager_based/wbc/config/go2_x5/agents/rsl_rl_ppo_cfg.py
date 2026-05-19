@@ -137,3 +137,12 @@ class ArxX5WbcFlatPPORunnerCfg(ArxX5WbcRoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.experiment_name = "unitree_go2_x5_wbc_flat"
+
+
+@configclass
+class ArxX5WbcFlatH2PFGPPORunnerCfg(ArxX5WbcFlatPPORunnerCfg):
+    """Runner cfg for H2 FPG experiment — identical hypers, distinct log dir."""
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "unitree_go2_x5_wbc_flat_h2pfg"

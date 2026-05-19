@@ -38,4 +38,28 @@ gym.register(
     },
 )
 
+# ---------------------------------------------------------------------------
+# H2: FPG IK feasibility reward — controlled experiment vs. baseline above
+# ---------------------------------------------------------------------------
+
+gym.register(
+    id="RobotLab-Isaac-WBC-Flat-Unitree-Go2-X5-H2PFG-v0",
+    entry_point="robot_lab.tasks.manager_based.wbc:WbcEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.flat_env_cfg:ArxX5WbcFlatH2PFGEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:ArxX5WbcFlatH2PFGPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-WBC-Flat-Unitree-Go2-X5-H2PFG-Play-v0",
+    entry_point="robot_lab.tasks.manager_based.wbc:WbcEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.flat_env_cfg:ArxX5WbcFlatH2PFGPlayEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:ArxX5WbcFlatH2PFGPPORunnerCfg",
+    },
+)
+
 
