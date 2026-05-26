@@ -93,6 +93,7 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import robot_lab.tasks  # noqa: F401
+import robot_lab.tasks.direct.go2_wtw  # noqa: F401 – ensure WTW/X5 gym env registration
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -101,7 +102,7 @@ torch.backends.cudnn.benchmark = False
 
 
 def _register_go2_wtw_rma_classes(task_name: str | None):
-    if task_name is None or "WalkTheseWays" not in task_name:
+    if task_name is None or ("WalkTheseWays" not in task_name and "ArmDisturbance" not in task_name):
         return
     from robot_lab.tasks.direct.go2_wtw.agents.rsl_rl_rma import Go2WTWActorCritic, Go2WTWPPO
     import rsl_rl.runners.on_policy_runner as on_policy_runner

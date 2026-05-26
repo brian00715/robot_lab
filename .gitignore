@@ -39,3 +39,7 @@ _build
 pyrightconfig.json
 
 tmp
+
+
+# urdf robot_lab/source/robot_lab/data/Robots/unitree/go2_x5_description
+source/robot_lab/data/Robots/unitree/go2_x5_description
