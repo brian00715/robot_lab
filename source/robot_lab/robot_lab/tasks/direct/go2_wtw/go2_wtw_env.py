@@ -1381,6 +1381,30 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
                     )},
                 ))
 
+                # Current pose frame: 3 cylinders (orange=X, cyan=Y, white=Z) — slightly thinner
+                _arm2, _r2 = 0.6, 0.009
+                self._vis_cur_pose_x = VisualizationMarkers(VisualizationMarkersCfg(
+                    prim_path="/Visuals/WTW/cur_pose_x",
+                    markers={"cyl": sim_utils.CylinderCfg(
+                        radius=_r2, height=_arm2, axis="X",
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.5, 0.0)),
+                    )},
+                ))
+                self._vis_cur_pose_y = VisualizationMarkers(VisualizationMarkersCfg(
+                    prim_path="/Visuals/WTW/cur_pose_y",
+                    markers={"cyl": sim_utils.CylinderCfg(
+                        radius=_r2, height=_arm2, axis="Y",
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 1.0)),
+                    )},
+                ))
+                self._vis_cur_pose_z = VisualizationMarkers(VisualizationMarkersCfg(
+                    prim_path="/Visuals/WTW/cur_pose_z",
+                    markers={"cyl": sim_utils.CylinderCfg(
+                        radius=_r2, height=_arm2, axis="Z",
+                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 1.0, 1.0)),
+                    )},
+                ))
+
                 cfg = SPHERE_MARKER_CFG.copy()
                 cfg.prim_path = "/Visuals/WTW/height_target"
                 cfg.markers["sphere"].radius = 0.04
@@ -1393,6 +1417,9 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             self._vis_cmd_pose_x.set_visibility(True)
             self._vis_cmd_pose_y.set_visibility(True)
             self._vis_cmd_pose_z.set_visibility(True)
+            self._vis_cur_pose_x.set_visibility(True)
+            self._vis_cur_pose_y.set_visibility(True)
+            self._vis_cur_pose_z.set_visibility(True)
             self._vis_height_target.set_visibility(True)
         else:
             if hasattr(self, "_vis_cmd_vel"):
@@ -1402,6 +1429,9 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
                 self._vis_cmd_pose_x.set_visibility(False)
                 self._vis_cmd_pose_y.set_visibility(False)
                 self._vis_cmd_pose_z.set_visibility(False)
+                self._vis_cur_pose_x.set_visibility(False)
+                self._vis_cur_pose_y.set_visibility(False)
+                self._vis_cur_pose_z.set_visibility(False)
                 self._vis_height_target.set_visibility(False)
 
     def _debug_vis_callback(self, event):
@@ -1454,9 +1484,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         frame_pos[:, 2] += 0.05
         self._vis_body_frame.visualize(frame_pos, base_quat)
 
-        # --- commanded pose frame: 3 cylinders at commanded height ---
-        # CylinderCfg axis="X/Y/Z" bakes the long-axis direction into the prim;
-        # cmd_pose_quat rotates the entire frame in world space — no per-axis offset needed.
+        # --- commanded pose frame (red/green/blue thick): at commanded height, commanded roll/pitch ---
         # Match _reward_orientation_control(): positive pitch/roll commands are
         # converted with a negative sign before comparing projected gravity.
         cmd_roll = -self.commands[:, 11]
@@ -1468,6 +1496,13 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self._vis_cmd_pose_x.visualize(cmd_pose_pos, cmd_pose_quat)
         self._vis_cmd_pose_y.visualize(cmd_pose_pos, cmd_pose_quat)
         self._vis_cmd_pose_z.visualize(cmd_pose_pos, cmd_pose_quat)
+
+        # --- current pose frame (orange/cyan/white thin): at actual base height, actual roll/pitch ---
+        cur_pose_pos = base_pos.clone()
+        cur_pose_pos[:, 2] = base_pos[:, 2] + 0.05
+        self._vis_cur_pose_x.visualize(cur_pose_pos, base_quat)
+        self._vis_cur_pose_y.visualize(cur_pose_pos, base_quat)
+        self._vis_cur_pose_z.visualize(cur_pose_pos, base_quat)
 
         # --- height target sphere (yellow) ---
         height_pos = base_pos.clone()

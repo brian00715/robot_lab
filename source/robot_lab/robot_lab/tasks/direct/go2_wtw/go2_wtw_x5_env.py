@@ -205,7 +205,7 @@ class Go2X5WalkTheseWaysEnv(Go2WalkTheseWaysEnv):
         # Sync internal buffers with the now-reset sim state
         self.arm_dof_pos[env_ids] = arm_home
         self.arm_dof_vel[env_ids] = 0.0
-        self.arm_joint_targets[env_ids] = self._arm_controller.home_pose
+        self.arm_joint_targets[env_ids] = self._arm_controller.home_pose.clone()
         # Inject arm curriculum info so RSL-RL logs it each iteration
         if "episode" in self.extras:
             self.extras["episode"]["arm_stage"] = float(self._arm_stage + 1)
@@ -219,6 +219,44 @@ class Go2X5WalkTheseWaysEnv(Go2WalkTheseWaysEnv):
         rewards = super()._get_rewards()
         self._ep_total_reward.add_(rewards)
         return rewards
+
+    def _resample_commands_if_due(self):
+        """Resample gait commands and, if enabled via cfg flag, arm mode/stage too."""
+        super()._resample_commands_if_due()
+
+        if not getattr(self.cfg, "play_resample_arm", False):
+            return
+
+        import math as _math
+        step_dt = self.step_dt
+        sample_interval = max(1, round(self.cfg.resampling_time / step_dt))
+        # Only act on the very first env's counter as a proxy (all envs share same interval)
+        if self.episode_length_buf[0].item() % sample_interval != 0:
+            return
+
+        # Randomly pick a new arm motion mode for every env
+        modes = [
+            "circular", "figure_eight", "sinusoidal", "random_walk", "reach_points",
+            "fishing", "grasping", "swinging", "probing",
+        ]
+        import random
+        self._arm_controller.motion_modes = [random.choice(modes) for _ in range(self.num_envs)]
+        # Re-randomize per-env trajectory parameters so motion looks fresh
+        self._arm_controller.frequencies = (
+            torch.rand(self.num_envs, device=self.device) * 1.5 + 0.3
+        )
+        self._arm_controller.amplitudes = (
+            torch.rand(self.num_envs, device=self.device) * 0.4 + 0.1
+        )
+        self._arm_controller.phase_offsets = (
+            torch.rand(self.num_envs, device=self.device) * 2 * _math.pi
+        )
+        self._arm_controller.timesteps.zero_()
+
+        # Randomly pick an arm stage (1 … max_stage, skip stage-0 which is locked)
+        max_stage = len(self.cfg.arm_stage_motion_scales) - 1
+        self._arm_stage = random.randint(1, max_stage)
+        self._arm_motion_scale = self.cfg.arm_stage_motion_scales[self._arm_stage]
 
     # ==========================================================================
     # Arm curriculum (auto-driven from _reset_idx via episode reward tracking)

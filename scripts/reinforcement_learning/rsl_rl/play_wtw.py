@@ -56,6 +56,7 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import robot_lab.tasks  # noqa: F401
+import robot_lab.tasks.direct.go2_wtw  # noqa: F401 – ensure WTW/X5 gym env registration
 
 
 class _OnnxActorWrapper(torch.nn.Module):
@@ -100,7 +101,9 @@ def _export_policy(policy_nn, normalizer, export_dir: str):
             print(f"[WARN] Failed to export CSE ONNX policy; continuing play: {fallback_exc}")
 
 
-def _register_go2_wtw_rma_classes():
+def _register_go2_wtw_rma_classes(task_name: str | None = None):
+    if task_name is not None and "WalkTheseWays" not in task_name and "ArmDisturbance" not in task_name:
+        return
     from robot_lab.tasks.direct.go2_wtw.agents.rsl_rl_rma import Go2WTWActorCritic, Go2WTWPPO
     import rsl_rl.runners.on_policy_runner as on_policy_runner
 
@@ -138,7 +141,7 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
 
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    _register_go2_wtw_rma_classes()
+    _register_go2_wtw_rma_classes(task_name)
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     runner.load(resume_path)
     policy = runner.get_inference_policy(device=env.unwrapped.device)
