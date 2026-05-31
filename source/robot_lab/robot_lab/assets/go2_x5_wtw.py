@@ -59,8 +59,8 @@ GO2_X5_WTW_CFG = ArticulationCfg(
         ),
         "arm": DelayedPDActuatorCfg(
             joint_names_expr=["joint[1-6]"],
-            effort_limit=20.0,
-            velocity_limit=10.0,
+            effort_limit=10.0,
+            velocity_limit=5.0,
             stiffness=25.0,
             damping=0.5,
             friction=0.01,

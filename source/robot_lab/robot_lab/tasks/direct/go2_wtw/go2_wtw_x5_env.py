@@ -105,7 +105,7 @@ class Go2X5WalkTheseWaysEnv(Go2WalkTheseWaysEnv):
 
         # ---- Arm joints (ARX5TrajectoryController) ------------------------------
         arm_targets = self._arm_controller.generate_arm_action(self)
-        self.arm_joint_targets = arm_targets
+        self.arm_joint_targets = arm_targets.clone()
         self.robot.set_joint_position_target(arm_targets, joint_ids=self.arm_joint_indices)
 
     # ==========================================================================

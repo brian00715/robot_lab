@@ -214,7 +214,7 @@ class ARX5TrajectoryController:
             # In Stage 1 (motion_scale=0), keep arm fixed at safe home pose
             if current_motion_scale == 0.0:
                 # Stage 1: keep arm locked at zero position (matches original curriculum)
-                return self.home_pose.unsqueeze(0).expand(self.num_envs, -1)
+                return self.home_pose.unsqueeze(0).expand(self.num_envs, -1).clone()
 
             # Update local motion_scale if changed
             if self.motion_scale != current_motion_scale:
@@ -222,7 +222,7 @@ class ARX5TrajectoryController:
         else:
             # Fallback: No curriculum control, use initialization value
             if self.motion_scale == 0.0:
-                return self.home_pose.unsqueeze(0).expand(self.num_envs, -1)
+                return self.home_pose.unsqueeze(0).expand(self.num_envs, -1).clone()
 
         arm_actions = torch.zeros((self.num_envs, 6), device=self.device)
         

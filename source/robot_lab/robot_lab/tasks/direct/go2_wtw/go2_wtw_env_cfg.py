@@ -67,14 +67,14 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     lin_vel_x: tuple = (-1.0, 1.0)          # [m/s]
     lin_vel_y: tuple = (-0.6, 0.6)          # [m/s]
     ang_vel_yaw: tuple = (-1.0, 1.0)        # [rad/s]
-    body_height_cmd: tuple = (-0.25, 0.15)  # [m] relative to nominal 0.34 m
+    body_height_cmd: tuple = (-0.05, 0.05)  # [m] relative to nominal 0.30 m
     gait_frequency_cmd_range: tuple = (2.0, 4.0)   # [Hz]
     # For trot, _resample_commands maps raw phase to raw / 2 + 0.25; raw 0.5 gives phase 0.5.
     gait_phase_cmd_range: tuple = (0.5, 0.5)
     gait_offset_cmd_range: tuple = (0.0, 1.0)
     gait_bound_cmd_range: tuple = (0.0, 1.0)
     gait_duration_cmd_range: tuple = (0.5, 0.5)
-    footswing_height_range: tuple = (0.03, 0.35)   # [m]
+    footswing_height_range: tuple = (0.06, 0.061)  # [m] fixed ~6 cm swing
     body_pitch_range: tuple = (-0.4, 0.4)
     body_roll_range: tuple = (-0.0, 0.0)
     stance_width_range: tuple = (0.10, 0.45)
@@ -83,13 +83,13 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     limit_vel_x: tuple = (-5.0, 5.0)
     limit_vel_y: tuple = (-0.6, 0.6)
     limit_vel_yaw: tuple = (-5.0, 5.0)
-    limit_body_height: tuple = (-0.25, 0.15)
+    limit_body_height: tuple = (-0.05, 0.05)
     limit_gait_frequency: tuple = (2.0, 4.0)
     limit_gait_phase: tuple = (0.5, 0.5)
     limit_gait_offset: tuple = (0.0, 1.0)
     limit_gait_bound: tuple = (0.0, 1.0)
     limit_gait_duration: tuple = (0.5, 0.5)
-    limit_footswing_height: tuple = (0.03, 0.35)
+    limit_footswing_height: tuple = (0.06, 0.061)
     limit_body_pitch: tuple = (-0.4, 0.4)
     limit_body_roll: tuple = (-0.0, 0.0)
     limit_stance_width: tuple = (0.10, 0.45)
