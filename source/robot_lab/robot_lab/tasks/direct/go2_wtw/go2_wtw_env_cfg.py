@@ -289,12 +289,17 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     gravity_range: tuple = (-1.0, 1.0)
     gravity_rand_interval_s: float = 8.0
     gravity_impulse_duration: float = 0.99
-    push_robots: bool = False
-    max_push_vel_xy: float = 0.5
+    # Push robots (linear + angular impulse, synced with RoboDuet)
+    push_robots: bool = True
+    max_push_vel_xy: float = 1.0
+    max_push_ang_vel: float = 0.6  # RoboDuet: random angular velocity perturbation on push
     push_interval_s: float = 15.0
     rand_interval_s: float = 4.0
     randomize_lag_timesteps: bool = True
     lag_timesteps: int = 6
+    # Sub-step action delay: randomly choose which decimation step the new action takes effect
+    # (RoboDuet: randomize_action_delay=True, mirrors sub-step jitter in real hardware)
+    randomize_action_delay: bool = True
     randomize_rigids_after_start: bool = False
     strict_dr_writes: bool = True
 
@@ -302,8 +307,18 @@ class Go2WalkTheseWaysEnvCfg(DirectRLEnvCfg):
     init_pos_z: float = 0.34
     init_x_range: float = 0.2
     init_y_range: float = 0.2
-    init_yaw_range: float = 3.14  # random yaw on reset
-    init_vel_range: float = 0.5  # random base velocity on reset
+    init_yaw_range: float = 3.14   # random yaw on reset
+    init_pitch_range: float = 0.0  # random pitch on reset (0 = disabled; RoboDuet default ramps from 0 via curriculum)
+    init_roll_range: float = 0.0   # random roll on reset  (0 = disabled)
+    init_z_range: float = 0.0      # extra random z-offset on reset [m] (on top of init_pos_z)
+    init_vel_range: float = 0.5    # random base velocity on reset
+
+    # ------------ command dead zones / zero-cmd probability (synced with RoboDuet) --
+    # Individual per-axis dead zones (vs. previous norm>0.2 on xy only)
+    cmd_vel_x_deadzone: float = 0.07    # zero vx if |vx| < threshold
+    cmd_vel_y_deadzone: float = 0.07    # zero vy if |vy| < threshold
+    cmd_yaw_deadzone: float = 0.10      # zero yaw if |yaw_cmd| < threshold
+    zero_cmd_prob: float = 0.1          # fraction of envs assigned zero velocity each resample
 
     clip_observations: float = 100.0
     clip_actions: float = 10.0

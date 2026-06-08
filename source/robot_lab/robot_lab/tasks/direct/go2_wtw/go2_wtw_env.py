@@ -147,6 +147,12 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         lag_n = self.cfg.lag_timesteps + 1
         self.lag_buffer = [torch.zeros(self.num_envs, num_dof, device=self.device) for _ in range(lag_n)]
 
+        # ---- action delay (sub-step jitter, RoboDuet-style) ------------------
+        # Per-env index: the decimation sub-step at which the new action takes effect.
+        # Generated fresh each policy step in _pre_physics_step.
+        self._actions_start_decimation = torch.zeros(self.num_envs, 1, dtype=torch.long, device=self.device)
+        self._decimation_step_count: int = 0
+
         # ---- noise scale vector ----------------------------------------------
         self.noise_scale_vec = self._build_noise_scale_vec()
         self.obs_history = torch.zeros(
@@ -274,12 +280,41 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.prev_foot_velocities = self.foot_velocities.clone()
         self.actions = torch.clip(actions, -self.cfg.clip_actions, self.cfg.clip_actions)
 
+        # Reset decimation sub-step counter for action delay
+        self._decimation_step_count = 0
+        if self.cfg.randomize_action_delay:
+            self._actions_start_decimation = torch.randint(
+                0,
+                self.cfg.decimation + 1,
+                (self.num_envs, 1),
+                device=self.device,
+            )
+
     def _apply_action(self):
+        target = self._compute_dog_joint_target()
+        self.robot.set_joint_position_target(target, joint_ids=self.joint_indices)
+
+    def _compute_dog_joint_target(self) -> torch.Tensor:
+        """Compute the dog joint position target for the current decimation sub-step.
+
+        Implements RoboDuet-style sub-step action delay: randomly decide which
+        decimation sub-step the new action takes effect, using last_actions
+        for earlier sub-steps.  Also applies the lag buffer (full-step delay).
+        Returns the position target tensor to be sent to simulation.
+        """
+        # ---- Sub-step action delay (RoboDuet: randomize_action_delay) ----------
+        if self.cfg.randomize_action_delay:
+            use_new = (self._decimation_step_count >= self._actions_start_decimation).float()
+            effective_actions = use_new * self.actions + (1.0 - use_new) * self.last_actions
+            self._decimation_step_count += 1
+        else:
+            effective_actions = self.actions
+
         # Scale actions; hip joints get additional reduction
-        actions_scaled = self.actions * self.cfg.action_scale
+        actions_scaled = effective_actions * self.cfg.action_scale
         actions_scaled[:, self.hip_joint_indices] *= self.cfg.hip_scale_reduction
 
-        # Lag buffer simulation
+        # Full-step lag buffer simulation
         if self.cfg.randomize_lag_timesteps:
             self.lag_buffer = self.lag_buffer[1:] + [actions_scaled.clone()]
             self.joint_pos_target = self.lag_buffer[0] + self.default_dof_pos
@@ -287,8 +322,7 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             self.joint_pos_target = actions_scaled + self.default_dof_pos
 
         # Motor offset (simulates calibration error)
-        target = self.joint_pos_target + self.motor_offsets
-        self.robot.set_joint_position_target(target, joint_ids=self.joint_indices)
+        return self.joint_pos_target + self.motor_offsets
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         # Refresh physics state first
@@ -364,17 +398,36 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         root_state[:, 1] += torch.empty(len(env_ids), device=self.device).uniform_(
             -self.cfg.init_y_range, self.cfg.init_y_range
         )
-        root_state[:, 2] = self.cfg.init_pos_z + self.scene.env_origins[env_ids, 2]
+        # Base z: fixed height + optional random z-offset [RoboDuet: z_init_range]
+        init_z_range = getattr(self.cfg, "init_z_range", 0.0)
+        root_state[:, 2] = (
+            self.cfg.init_pos_z
+            + self.scene.env_origins[env_ids, 2]
+            + torch.empty(len(env_ids), device=self.device).uniform_(0.0, init_z_range)
+        )
 
-        # Random yaw
-        if self.cfg.init_yaw_range > 0.0:
-            yaws = torch.empty(len(env_ids), device=self.device).uniform_(
-                -self.cfg.init_yaw_range, self.cfg.init_yaw_range
-            )
-            quats = quat_from_angle_axis(yaws, torch.tensor([0.0, 0.0, 1.0], device=self.device))
-            root_state[:, 3:7] = quats
+        # Base orientation: yaw, then optionally pitch and roll independently
+        # [RoboDuet: yaw / pitch / roll each randomized with curriculum-based ranges]
+        yaw_range = self.cfg.init_yaw_range
+        pitch_range = getattr(self.cfg, "init_pitch_range", 0.0)
+        roll_range = getattr(self.cfg, "init_roll_range", 0.0)
+        if yaw_range > 0.0:
+            yaws = torch.empty(len(env_ids), device=self.device).uniform_(-yaw_range, yaw_range)
+            q_yaw = quat_from_angle_axis(yaws, torch.tensor([0.0, 0.0, 1.0], device=self.device))
         else:
-            root_state[:, 3:7] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)  # identity in WXYZ
+            q_yaw = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).expand(len(env_ids), -1)
+        if pitch_range > 0.0:
+            pitches = torch.empty(len(env_ids), device=self.device).uniform_(-pitch_range, pitch_range)
+            q_pitch = quat_from_angle_axis(pitches, torch.tensor([0.0, 1.0, 0.0], device=self.device))
+        else:
+            q_pitch = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).expand(len(env_ids), -1)
+        if roll_range > 0.0:
+            rolls = torch.empty(len(env_ids), device=self.device).uniform_(-roll_range, roll_range)
+            q_roll = quat_from_angle_axis(rolls, torch.tensor([1.0, 0.0, 0.0], device=self.device))
+        else:
+            q_roll = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device).unsqueeze(0).expand(len(env_ids), -1)
+        # Compose: q = q_yaw * q_pitch * q_roll  (yaw applied first, then pitch, then roll)
+        root_state[:, 3:7] = quat_mul(q_yaw, quat_mul(q_pitch, q_roll))
 
         # Random base velocity
         root_state[:, 7:13] = torch.empty(len(env_ids), 6, device=self.device).uniform_(
@@ -1026,8 +1079,24 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
             self.commands[env_ids, 6] = torch.round(2 * self.commands[env_ids, 6]) / 2.0 % 1
             self.commands[env_ids, 7] = torch.round(2 * self.commands[env_ids, 7]) / 2.0 % 1
 
-        # Zero small xy velocity commands (dead zone)
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        # --- RoboDuet-style command dead zones and zero-velocity sampling --------
+        # 1) Random 10% of envs are assigned zero velocity (stationary training)
+        zero_cmd_prob = getattr(self.cfg, "zero_cmd_prob", 0.0)
+        if zero_cmd_prob > 0.0:
+            zero_mask = torch.rand(len(env_ids), device=self.device) < zero_cmd_prob
+            if zero_mask.any():
+                self.commands[env_ids[zero_mask], :3] = 0.0
+
+        # 2) Individual per-axis dead zones (replaces previous norm>0.2 on xy only)
+        dx = getattr(self.cfg, "cmd_vel_x_deadzone", 0.0)
+        dy = getattr(self.cfg, "cmd_vel_y_deadzone", 0.0)
+        dyaw = getattr(self.cfg, "cmd_yaw_deadzone", 0.0)
+        if dx > 0.0:
+            self.commands[env_ids, 0] *= (torch.abs(self.commands[env_ids, 0]) > dx).float()
+        if dy > 0.0:
+            self.commands[env_ids, 1] *= (torch.abs(self.commands[env_ids, 1]) > dy).float()
+        if dyaw > 0.0:
+            self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > dyaw).float()
 
         # Reset command sums
         for key in self.command_sums:
@@ -1243,12 +1312,16 @@ class Go2WalkTheseWaysEnv(DirectRLEnv):
         self.gravity_vec[:] = (g / g.norm()).unsqueeze(0)
 
     def _push_robots(self, env_ids: torch.Tensor):
+        """Apply random linear + angular impulse to selected robots (RoboDuet-style)."""
         if len(env_ids) == 0:
             return
         max_vel = self.cfg.max_push_vel_xy
         root_lin = self.robot.data.root_lin_vel_w[env_ids].clone()
         root_lin[:, :2] = torch.empty(len(env_ids), 2, device=self.device).uniform_(-max_vel, max_vel)
-        root_ang = self.robot.data.root_ang_vel_w[env_ids]
+        root_ang = self.robot.data.root_ang_vel_w[env_ids].clone()
+        max_ang = getattr(self.cfg, "max_push_ang_vel", 0.0)
+        if max_ang > 0.0:
+            root_ang = torch.empty(len(env_ids), 3, device=self.device).uniform_(-max_ang, max_ang)
         self.robot.write_root_velocity_to_sim(torch.cat([root_lin, root_ang], dim=1), env_ids)
 
     # ==========================================================================

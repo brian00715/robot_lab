@@ -1,1 +1,0 @@
-pkill -9 -f "play_wtw_annotated" 2>/dev/null; pkill -9 -f "kit" 2>/dev/null; echo "done"

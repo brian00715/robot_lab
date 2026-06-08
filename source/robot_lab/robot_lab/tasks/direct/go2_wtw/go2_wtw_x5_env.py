@@ -90,17 +90,8 @@ class Go2X5WalkTheseWaysEnv(Go2WalkTheseWaysEnv):
 
     def _apply_action(self):
         """Apply dog policy actions (12D) + arm trajectory actions (6D)."""
-        # ---- Dog joints (identical to parent) -----------------------------------
-        actions_scaled = self.actions * self.cfg.action_scale
-        actions_scaled[:, self.hip_joint_indices] *= self.cfg.hip_scale_reduction
-
-        if self.cfg.randomize_lag_timesteps:
-            self.lag_buffer = self.lag_buffer[1:] + [actions_scaled.clone()]
-            self.joint_pos_target = self.lag_buffer[0] + self.default_dof_pos
-        else:
-            self.joint_pos_target = actions_scaled + self.default_dof_pos
-
-        dog_target = self.joint_pos_target + self.motor_offsets
+        # ---- Dog joints (uses parent helper: action delay + lag buffer) ---------
+        dog_target = self._compute_dog_joint_target()
         self.robot.set_joint_position_target(dog_target, joint_ids=self.joint_indices)
 
         # ---- Arm joints (ARX5TrajectoryController) ------------------------------
